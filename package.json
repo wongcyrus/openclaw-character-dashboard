@@ -21,18 +21,19 @@
     "dev:all": "concurrently \"npm run dev\" \"npm run server\""
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-agentcore": "^3.1057.0",
+    "cors": "^2.8.5",
     "express": "^4.18.2",
-    "mime-types": "^2.1.35",
     "highlight.js": "^11.9.0",
+    "mime-types": "^2.1.35",
     "phaser": "^3.60.0",
     "phaser3-rex-plugins": "^1.60.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-markdown": "^9.0.1",
     "ws": "^8.18.3",
-    "zustand": "^4.4.7",
     "zod": "^3.22.4",
-    "cors": "^2.8.5"
+    "zustand": "^4.4.7"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.2.0",

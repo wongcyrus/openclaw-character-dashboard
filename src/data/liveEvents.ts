@@ -23,6 +23,11 @@ export class LiveEventSource {
     this.ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+        console.log("[LiveEventSource] Event received", {
+          type: data?.type,
+          agentId: data?.agentId,
+          runId: data?.runId,
+        });
         this.handleEvent(data);
       } catch (err) {
         console.error("[LiveEventSource] Failed to parse event", err);
@@ -63,7 +68,13 @@ export class LiveEventSource {
 
       const worldConfig = useWorldStore.getState().worldConfig;
       const character = worldConfig?.characters.find(c => c.agentId === agentId);
-      if (!character) return;
+      if (!character) {
+        console.warn("[LiveEventSource] No character mapping for event", {
+          agentId,
+          knownAgentIds: worldConfig?.characters.map((c) => c.agentId) ?? [],
+        });
+        return;
+      }
 
       const characterId = character.id;
       
@@ -78,6 +89,11 @@ export class LiveEventSource {
         role: role || currentMessage?.role || "assistant",
         timestamp: Date.now()
       });
+      console.log("[LiveEventSource] Updated character message", {
+        characterId,
+        agentId,
+        type: data.type,
+      });
 
       // Reset timer
       if (this.messageTimers.has(characterId)) {
@@ -90,14 +106,6 @@ export class LiveEventSource {
       }, MESSAGE_TIMEOUT_MS);
 
       this.messageTimers.set(characterId, timer);
-    } else if (data.type === "agent-lifecycle") {
-        if (data.phase === "end" || data.phase === "error") {
-             const worldConfig = useWorldStore.getState().worldConfig;
-             const character = worldConfig?.characters.find(c => c.agentId === data.agentId);
-             if (character) {
-                 useCharacterStore.getState().setCharacterMessage(character.id, null);
-             }
-        }
     }
   }
 }

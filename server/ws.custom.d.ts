@@ -16,6 +16,7 @@ declare module "ws" {
       url: string,
       options?: {
         headers?: Record<string, string>;
+        origin?: string;
       },
     );
 

@@ -1,24 +1,36 @@
-# OpenClaw Gateway Integration — Complete Reference
+# OpenClaw Dashboard Integration — Complete Reference
 
-This document captures how the dashboard currently connects to the OpenClaw Gateway and turns live session data into the map's `working` / `idle` character state.
+This document captures both supported dashboard backends:
+
+1. **Local gateway mode** — connect to a local OpenClaw gateway on `127.0.0.1:18789`
+2. **AgentCore bridge mode** — invoke the deployed AgentCore runtime for snapshots and optionally relay live events from the bridge `/ws` endpoint
+
+Both modes feed the same frontend APIs and turn live session data into the map's `working` / `idle` character state.
 
 ---
 
 ## Overview
 
-The browser does not connect to the OpenClaw Gateway directly. Instead, the React app polls a local Express endpoint, and that server opens a short-lived WebSocket connection to the gateway, performs the handshake, and returns a JSON snapshot.
+The browser does not connect to OpenClaw directly. Instead, the React app talks to the local Express server:
+
+- `GET /api/openclaw/snapshot`
+- `WS /api/ws`
+
+The server then adapts either a local gateway or the AgentCore bridge.
 
 ```
 Browser (React)
     │  GET /api/openclaw/snapshot  (every 20 s)
+    │  WS /api/ws
     ▼
 Vite Dev Server (`/api` proxy)
     │  http://localhost:<VITE_API_PORT>
     ▼
 Local Express Server (`server/index.ts`)
-    │  ws://127.0.0.1:18789  (new connection per poll)
-    ▼
-OpenClaw Gateway
+    ├─ local mode: ws://127.0.0.1:18789
+    └─ agentcore mode:
+         - InvokeAgentRuntime(action=dashboard_snapshot)
+         - optional WS relay to deployed bridge /ws
 ```
 
 ## Local Env Config
@@ -32,10 +44,29 @@ Runtime config lives in `.env` or `.env.local`.
 | `OPENCLAW_HOME`                    | OpenClaw config root containing `openclaw.json` and the default shared directory. |
 | `SHARED_ROOT`                      | Root path served by the resource wall file browser.                               |
 | `VITE_SESSION_ACTIVE_THRESHOLD_MS` | How long recent user-facing activity keeps an agent in `working`.                 |
+| `OPENCLAW_BACKEND_MODE`            | `local` (default) or `agentcore`.                                                 |
+
+### AgentCore-specific env
+
+Used only when `OPENCLAW_BACKEND_MODE=agentcore`.
+
+| Variable                        | Purpose |
+| ------------------------------ | ------- |
+| `AGENTCORE_REGION`             | AWS region for the deployed runtime. |
+| `AGENTCORE_RUNTIME_ARN`        | Runtime ARN for the OpenClaw AgentCore deployment. |
+| `AGENTCORE_RUNTIME_ENDPOINT_ID`| Runtime endpoint qualifier, e.g. `openclaw_endpoint_dev`. |
+| `AGENTCORE_ACTOR_ID`           | Actor identity passed to the bridge, e.g. `telegram:123456`. |
+| `AGENTCORE_CHANNEL`            | Optional channel override; defaults to the actor prefix. |
+| `AGENTCORE_USER_ID`            | Optional explicit user ID; defaults to a stable hash from actor ID. |
+| `AGENTCORE_RUNTIME_SESSION_ID` | Optional explicit runtime session ID; defaults to a stable hash from actor ID. |
+| `AGENTCORE_BRIDGE_WS_URL`      | Optional reachable WS URL for the deployed bridge `/ws`. Used when a direct relay URL exists. |
+| `AGENTCORE_EVENT_POLL_MS`      | Optional polling interval for AgentCore event relay fallback. Defaults to 2000 ms. |
+
+If `AGENTCORE_BRIDGE_WS_URL` is omitted, the dashboard server falls back to polling `dashboard_events` through `InvokeAgentRuntime` and forwards those events to browser clients on `/api/ws`.
 
 ---
 
-## Gateway Address & Config
+## Local Gateway Mode
 
 ### Default
 
@@ -102,6 +133,80 @@ function readGatewayConfig() {
   }
 }
 ```
+
+The local server now sets the WebSocket `origin` option to the gateway HTTP URL and continues to use the same read-only operator connection pattern.
+
+---
+
+## AgentCore Bridge Mode
+
+### Snapshot path
+
+The local server calls the AWS AgentCore data plane with:
+
+```json
+{
+  "action": "dashboard_snapshot",
+  "userId": "<resolved-user-id>",
+  "actorId": "<configured-actor-id>",
+  "channel": "<configured-channel>",
+  "sessionId": "<resolved-runtime-session-id>"
+}
+```
+
+The deployed runtime returns:
+
+```json
+{
+  "status": "ready",
+  "snapshot": {
+    "agents": { "...": "..." },
+    "sessions": { "...": "..." },
+    "presence": [],
+    "identities": {},
+    "source": "ws://127.0.0.1:18789",
+    "fetchedAt": 1780281977987
+  }
+}
+```
+
+The dashboard server unwraps `snapshot` and keeps the frontend response shape identical to local mode.
+
+### Live relay path
+
+If you have a reachable bridge WebSocket URL, set:
+
+```bash
+AGENTCORE_BRIDGE_WS_URL=wss://your-bridge-host/ws
+```
+
+The server automatically appends:
+
+- `userId`
+- `actorId`
+- `channel`
+
+unless they are already present in the URL.
+
+The dashboard server then relays the bridge's normalized events directly to browser clients on `/api/ws`.
+
+### Polled relay fallback
+
+If no reachable bridge WebSocket URL exists, the dashboard server uses the same AgentCore invoke path as snapshots and polls:
+
+```json
+{
+  "action": "dashboard_events",
+  "userId": "<resolved-user-id>",
+  "actorId": "<configured-actor-id>",
+  "channel": "<configured-channel>",
+  "sessionId": "<resolved-runtime-session-id>",
+  "since": 0,
+  "limit": 100
+}
+```
+
+The runtime buffers normalized dashboard events in-memory and returns only events after the caller's last seen sequence number. The local server forwards those events to the browser over `/api/ws`, so the frontend still gets `agent-message`, `agent-stream`, and `agent-lifecycle` updates even when no public runtime WebSocket URL exists.
 
 ---
 

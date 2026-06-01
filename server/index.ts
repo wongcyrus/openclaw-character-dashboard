@@ -1,21 +1,49 @@
 import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { createReadStream, existsSync, readFileSync } from "node:fs";
 import os from "node:os";
 import { lookup as mimeLookup } from "mime-types";
+import {
+  BedrockAgentCoreClient,
+  InvokeAgentRuntimeCommand,
+} from "@aws-sdk/client-bedrock-agentcore";
 import { WebSocketServer, WebSocket } from "ws";
 import type { RawData } from "ws";
 
-type GatewayConfig = {
+type LocalGatewayConfig = {
+  mode: "local";
   httpUrl: string;
   wsUrl: string;
   token: string;
 };
 
+type AgentCoreGatewayConfig = {
+  mode: "agentcore";
+  region: string;
+  runtimeArn: string;
+  qualifier: string;
+  actorId: string;
+  channel: string;
+  userId: string;
+  runtimeSessionId: string;
+  liveWsUrl: string | null;
+  eventPollIntervalMs: number;
+};
+
+type GatewayConfig = LocalGatewayConfig | AgentCoreGatewayConfig;
+
+type DashboardMonitor = {
+  start(): void;
+  stop(): void;
+};
+
 const dashboardWss = new WebSocketServer({ noServer: true });
 const connectedClients = new Set<WebSocket>();
+const DASHBOARD_EVENT_BACKLOG_LIMIT = 100;
+const dashboardEventBacklog: Record<string, unknown>[] = [];
 
 function agentIdFromSessionKey(key: string | undefined): string {
   if (!key) return "";
@@ -26,6 +54,13 @@ function agentIdFromSessionKey(key: string | undefined): string {
 dashboardWss.on("connection", (ws: WebSocket) => {
   connectedClients.add(ws);
   console.log(`[dashboard-ws] Client connected (total: ${connectedClients.size})`);
+
+  for (const event of dashboardEventBacklog) {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(event));
+    }
+  }
+
   ws.on("close", () => {
     connectedClients.delete(ws);
     console.log(`[dashboard-ws] Client disconnected (total: ${connectedClients.size})`);
@@ -33,6 +68,16 @@ dashboardWss.on("connection", (ws: WebSocket) => {
 });
 
 function broadcastToDashboard(data: any) {
+  if (data && typeof data === "object" && typeof data.type === "string") {
+    dashboardEventBacklog.push(data);
+    if (dashboardEventBacklog.length > DASHBOARD_EVENT_BACKLOG_LIMIT) {
+      dashboardEventBacklog.splice(
+        0,
+        dashboardEventBacklog.length - DASHBOARD_EVENT_BACKLOG_LIMIT,
+      );
+    }
+  }
+
   const payload = JSON.stringify(data);
   for (const client of connectedClients) {
     if (client.readyState === WebSocket.OPEN) {
@@ -229,19 +274,36 @@ function sanitiseRelPath(raw: unknown): string {
 }
 
 function startServer(port: number): void {
-  const gatewayHost = process.env["GATEWAY_HOST"] ?? "127.0.0.1";
   const server = app.listen(port, "0.0.0.0", () => {
     console.warn(
       `[resource-wall server] Listening on http://0.0.0.0:${port}`,
     );
     console.warn(`[resource-wall server] CWD: ${process.cwd()}`);
     console.warn(`[resource-wall server] Serving files from: ${SHARED_ROOT}`);
-    console.warn(`[resource-wall server] Targeting OpenClaw Gateway at: ${gatewayHost}`);
     console.warn(`[resource-wall server] OpenClaw Home is set to: ${OPENCLAW_HOME}`);
 
     void gatewayConfigPromise.then((config) => {
-      const monitor = new GatewayEventMonitor(config);
-      monitor.start();
+      if (config.mode === "local") {
+        console.warn(
+          `[resource-wall server] Targeting local OpenClaw Gateway at: ${config.wsUrl}`,
+        );
+      } else {
+        console.warn(
+          `[resource-wall server] Targeting AgentCore runtime: ${config.runtimeArn} (${config.qualifier})`,
+        );
+        if (config.liveWsUrl) {
+          console.warn(
+            `[resource-wall server] Targeting AgentCore bridge WS at: ${config.liveWsUrl}`,
+          );
+        } else {
+          console.warn(
+            `[resource-wall server] AGENTCORE_BRIDGE_WS_URL not set; using polled AgentCore event relay every ${config.eventPollIntervalMs}ms.`,
+          );
+        }
+      }
+
+      const monitor = createDashboardMonitor(config);
+      monitor?.start();
     });
   });
 
@@ -268,13 +330,25 @@ function startServer(port: number): void {
   });
 }
 
+function createDashboardMonitor(config: GatewayConfig): DashboardMonitor | null {
+  if (config.mode === "local") {
+    return new GatewayEventMonitor(config);
+  }
+
+  if (config.liveWsUrl) {
+    return new AgentCoreBridgeMonitor(config.liveWsUrl);
+  }
+
+  return new AgentCorePollingMonitor(config);
+}
+
 class GatewayEventMonitor {
   private ws: WebSocket | null = null;
-  private config: GatewayConfig;
+  private config: LocalGatewayConfig;
   private shouldReconnect = true;
   private runRoles = new Map<string, string>();
 
-  constructor(config: GatewayConfig) {
+  constructor(config: LocalGatewayConfig) {
     this.config = config;
   }
 
@@ -282,7 +356,7 @@ class GatewayEventMonitor {
     if (!this.shouldReconnect) return;
     console.log(`[monitor] Connecting to ${this.config.wsUrl} (token length: ${this.config.token.length})...`);
     this.ws = new WebSocket(this.config.wsUrl, {
-      headers: { Origin: this.config.httpUrl },
+      origin: this.config.httpUrl,
     });
 
     this.ws.on("message", (data: RawData) => {
@@ -397,6 +471,7 @@ class GatewayEventMonitor {
           console.error(`[monitor] Gateway connect failed: ${message.error?.message}`);
         }
       }
+
     });
 
     this.ws.on("close", () => {
@@ -416,6 +491,117 @@ class GatewayEventMonitor {
   stop() {
     this.shouldReconnect = false;
     this.ws?.close();
+  }
+}
+
+class AgentCoreBridgeMonitor {
+  private ws: WebSocket | null = null;
+  private readonly wsUrl: string;
+  private shouldReconnect = true;
+
+  constructor(wsUrl: string) {
+    this.wsUrl = wsUrl;
+  }
+
+  start(): void {
+    if (!this.shouldReconnect) return;
+    console.log(`[monitor] Connecting to AgentCore bridge ${this.wsUrl}...`);
+    this.ws = new WebSocket(this.wsUrl);
+
+    this.ws.on("open", () => {
+      console.log("[monitor] Successfully connected to AgentCore bridge");
+    });
+
+    this.ws.on("message", (data: RawData) => {
+      try {
+        broadcastToDashboard(JSON.parse(String(data)));
+      } catch (err) {
+        console.error(
+          `[monitor] Failed to parse AgentCore bridge event: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    });
+
+    this.ws.on("close", () => {
+      console.warn("[monitor] AgentCore bridge WebSocket closed");
+      this.ws = null;
+      if (this.shouldReconnect) {
+        console.log("[monitor] Reconnecting in 5s...");
+        setTimeout(() => this.start(), 5000);
+      }
+    });
+
+    this.ws.on("error", (err: Error) => {
+      console.error(`[monitor] AgentCore bridge WebSocket error: ${err.message}`);
+    });
+  }
+
+  stop(): void {
+    this.shouldReconnect = false;
+    this.ws?.close();
+  }
+}
+
+class AgentCorePollingMonitor {
+  private readonly config: AgentCoreGatewayConfig;
+  private shouldPoll = true;
+  private nextSeq = 0;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private inFlight = false;
+
+  constructor(config: AgentCoreGatewayConfig) {
+    this.config = config;
+  }
+
+  start(): void {
+    if (!this.shouldPoll) return;
+    void this.poll();
+  }
+
+  stop(): void {
+    this.shouldPoll = false;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+    }
+  }
+
+  private scheduleNext(): void {
+    if (!this.shouldPoll) return;
+    this.timer = setTimeout(() => {
+      void this.poll();
+    }, this.config.eventPollIntervalMs);
+  }
+
+  private async poll(): Promise<void> {
+    if (!this.shouldPoll || this.inFlight) {
+      return;
+    }
+
+    this.inFlight = true;
+    try {
+      const payload = await fetchAgentCoreEvents(this.config, this.nextSeq);
+      this.nextSeq =
+        typeof payload.nextSeq === "number" ? payload.nextSeq : this.nextSeq;
+      const events = payload.events ?? [];
+
+      if (events.length > 0) {
+        console.log(
+          `[monitor] Relaying ${events.length} AgentCore event(s), nextSeq=${this.nextSeq}`,
+        );
+      }
+
+      for (const event of events) {
+        broadcastToDashboard(event);
+      }
+    } catch (err) {
+      console.error(
+        `[monitor] AgentCore event poll failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      this.inFlight = false;
+      this.scheduleNext();
+    }
   }
 }
 
@@ -490,6 +676,11 @@ function resolveConfiguredPath(rawPath: string): string {
 }
 
 async function readGatewayConfig(): Promise<GatewayConfig> {
+  const mode = (process.env["OPENCLAW_BACKEND_MODE"] ?? "local").toLowerCase();
+  if (mode === "agentcore") {
+    return readAgentCoreConfig();
+  }
+
   const gatewayHost = process.env["GATEWAY_HOST"] ?? "127.0.0.1";
   const configPath = path.join(OPENCLAW_HOME, "openclaw.json");
   try {
@@ -507,6 +698,7 @@ async function readGatewayConfig(): Promise<GatewayConfig> {
     }
 
     return {
+      mode: "local",
       httpUrl: `http://${gatewayHost}:${port}`,
       wsUrl: `ws://${gatewayHost}:${port}`,
       token,
@@ -515,6 +707,7 @@ async function readGatewayConfig(): Promise<GatewayConfig> {
     const port = 18789;
     console.warn(`[gateway] Could not read config at ${configPath}, using defaults. Error: ${err instanceof Error ? err.message : String(err)}`);
     return {
+      mode: "local",
       httpUrl: `http://${gatewayHost}:${port}`,
       wsUrl: `ws://${gatewayHost}:${port}`,
       token: "",
@@ -526,12 +719,21 @@ async function fetchGatewaySnapshot(
   gatewayConfigPromise: GatewayConfig | Promise<GatewayConfig>,
 ): Promise<GatewaySnapshot> {
   const gatewayConfig = await gatewayConfigPromise;
+  if (gatewayConfig.mode === "agentcore") {
+    return fetchAgentCoreSnapshot(gatewayConfig);
+  }
 
+  return fetchLocalGatewaySnapshot(gatewayConfig);
+}
+
+async function fetchLocalGatewaySnapshot(
+  gatewayConfig: LocalGatewayConfig,
+): Promise<GatewaySnapshot> {
   console.log(`[gateway] Attempting connection to ${gatewayConfig.wsUrl}...`);
 
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(gatewayConfig.wsUrl, {
-      headers: { Origin: gatewayConfig.httpUrl },
+      origin: gatewayConfig.httpUrl,
     });
 
     let requestSeq = 1;
@@ -731,6 +933,184 @@ async function fetchGatewaySnapshot(
       }
     });
   });
+}
+
+function readAgentCoreConfig(): AgentCoreGatewayConfig {
+  const region =
+    process.env["AGENTCORE_REGION"] ??
+    process.env["AWS_REGION"] ??
+    process.env["AWS_DEFAULT_REGION"];
+  const runtimeArn = process.env["AGENTCORE_RUNTIME_ARN"] ?? "";
+  const qualifier = process.env["AGENTCORE_RUNTIME_ENDPOINT_ID"] ?? "";
+  const actorId = process.env["AGENTCORE_ACTOR_ID"] ?? "";
+  const channel =
+    process.env["AGENTCORE_CHANNEL"] ??
+    (actorId.includes(":") ? actorId.split(":", 1)[0] : "test");
+
+  if (!region) {
+    throw new Error("AGENTCORE_REGION or AWS_REGION is required for agentcore mode");
+  }
+  if (!runtimeArn) {
+    throw new Error("AGENTCORE_RUNTIME_ARN is required for agentcore mode");
+  }
+  if (!qualifier) {
+    throw new Error("AGENTCORE_RUNTIME_ENDPOINT_ID is required for agentcore mode");
+  }
+  if (!actorId) {
+    throw new Error("AGENTCORE_ACTOR_ID is required for agentcore mode");
+  }
+
+  const userId =
+    process.env["AGENTCORE_USER_ID"] ?? defaultAgentCoreUserId(actorId);
+  const runtimeSessionId =
+    process.env["AGENTCORE_RUNTIME_SESSION_ID"] ??
+    defaultAgentCoreRuntimeSessionId(actorId);
+  const eventPollIntervalMs = readPositiveInteger(
+    process.env["AGENTCORE_EVENT_POLL_MS"],
+    2000,
+  );
+  const liveWsUrl = process.env["AGENTCORE_BRIDGE_WS_URL"]
+    ? buildAgentCoreBridgeWsUrl(
+        process.env["AGENTCORE_BRIDGE_WS_URL"],
+        userId,
+        actorId,
+        channel,
+      )
+    : null;
+
+  return {
+    mode: "agentcore",
+    region,
+    runtimeArn,
+    qualifier,
+    actorId,
+    channel,
+    userId,
+    runtimeSessionId,
+    liveWsUrl,
+    eventPollIntervalMs,
+  };
+}
+
+async function fetchAgentCoreSnapshot(
+  config: AgentCoreGatewayConfig,
+): Promise<GatewaySnapshot> {
+  const payload = (await invokeAgentCoreAction(config, {
+    action: "dashboard_snapshot",
+    userId: config.userId,
+    actorId: config.actorId,
+    channel: config.channel,
+    sessionId: config.runtimeSessionId,
+  })) as {
+    status?: string;
+    error?: string;
+    snapshot?: GatewaySnapshot;
+  };
+
+  if (payload.status !== "ready" || !payload.snapshot) {
+    throw new Error(
+      payload.error ??
+        `AgentCore dashboard snapshot failed with status ${payload.status ?? "unknown"}`,
+    );
+  }
+
+  return payload.snapshot;
+}
+
+async function fetchAgentCoreEvents(
+  config: AgentCoreGatewayConfig,
+  since: number,
+): Promise<{
+  events?: Record<string, unknown>[];
+  nextSeq?: number;
+  streamStatus?: Record<string, unknown>;
+}> {
+  const payload = (await invokeAgentCoreAction(config, {
+    action: "dashboard_events",
+    userId: config.userId,
+    actorId: config.actorId,
+    channel: config.channel,
+    sessionId: config.runtimeSessionId,
+    since,
+    limit: 100,
+  })) as {
+    status?: string;
+    error?: string;
+    events?: Record<string, unknown>[];
+    nextSeq?: number;
+    streamStatus?: Record<string, unknown>;
+  };
+
+  if (payload.status !== "ready") {
+    throw new Error(
+      payload.error ??
+        `AgentCore dashboard events failed with status ${payload.status ?? "unknown"}`,
+    );
+  }
+
+  return payload;
+}
+
+async function invokeAgentCoreAction(
+  config: AgentCoreGatewayConfig,
+  payload: Record<string, unknown>,
+): Promise<unknown> {
+  const client = new BedrockAgentCoreClient({ region: config.region });
+  const command = new InvokeAgentRuntimeCommand({
+    agentRuntimeArn: config.runtimeArn,
+    qualifier: config.qualifier,
+    runtimeSessionId: config.runtimeSessionId,
+    contentType: "application/json",
+    accept: "application/json",
+    payload: Buffer.from(JSON.stringify(payload), "utf8"),
+  });
+
+  const response = await client.send(command);
+  const body = response.response;
+  if (!body) {
+    throw new Error("AgentCore runtime returned no response body");
+  }
+
+  const text =
+    typeof body.transformToString === "function"
+      ? await body.transformToString()
+      : Buffer.from(await body.transformToByteArray()).toString("utf8");
+  return JSON.parse(text);
+}
+
+function defaultAgentCoreUserId(actorId: string): string {
+  return `dashboard-user-${createHash("sha1").update(actorId).digest("hex").slice(0, 12)}`;
+}
+
+function defaultAgentCoreRuntimeSessionId(actorId: string): string {
+  return `dashboard_session_${createHash("sha1").update(actorId).digest("hex").slice(0, 24)}`;
+}
+
+function buildAgentCoreBridgeWsUrl(
+  rawUrl: string,
+  userId: string,
+  actorId: string,
+  channel: string,
+): string {
+  const url = new URL(rawUrl);
+  if (!url.searchParams.has("userId")) {
+    url.searchParams.set("userId", userId);
+  }
+  if (!url.searchParams.has("actorId")) {
+    url.searchParams.set("actorId", actorId);
+  }
+  if (!url.searchParams.has("channel")) {
+    url.searchParams.set("channel", channel);
+  }
+  return url.toString();
+}
+
+function readPositiveInteger(rawValue: string | undefined, fallback: number): number {
+  const parsed = Number(rawValue);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.floor(parsed);
 }
 
 function parseGatewayMessage(raw: unknown): GatewayMessage | null {
