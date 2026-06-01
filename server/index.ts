@@ -10,6 +10,11 @@ import {
   BedrockAgentCoreClient,
   InvokeAgentRuntimeCommand,
 } from "@aws-sdk/client-bedrock-agentcore";
+import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
+import {
+  DynamoDBDocumentClient,
+  GetCommand,
+} from "@aws-sdk/lib-dynamodb";
 import { WebSocketServer, WebSocket } from "ws";
 import type { RawData } from "ws";
 
@@ -44,11 +49,76 @@ const dashboardWss = new WebSocketServer({ noServer: true });
 const connectedClients = new Set<WebSocket>();
 const DASHBOARD_EVENT_BACKLOG_LIMIT = 100;
 const dashboardEventBacklog: Record<string, unknown>[] = [];
+const DEFAULT_DASHBOARD_AGENT_ID = "main";
+const dashboardAgentStates = new Map<string, "working" | "idle">();
 
 function agentIdFromSessionKey(key: string | undefined): string {
-  if (!key) return "";
+  if (!key || key === "global") return DEFAULT_DASHBOARD_AGENT_ID;
   const parts = key.split(":");
-  return parts[0] === "agent" ? (parts[1] ?? "") : "";
+  return parts[0] === "agent"
+    ? (parts[1] ?? DEFAULT_DASHBOARD_AGENT_ID)
+    : DEFAULT_DASHBOARD_AGENT_ID;
+}
+
+function normalizeDashboardEvent(data: any): any {
+  if (!data || typeof data !== "object" || typeof data.type !== "string") {
+    return data;
+  }
+
+  if (!data.type.startsWith("agent-")) {
+    return data;
+  }
+
+  const normalizedAgentId =
+    typeof data.agentId === "string" && data.agentId.trim()
+      ? data.agentId
+      : agentIdFromSessionKey(
+          typeof data.sessionKey === "string" ? data.sessionKey : undefined,
+        );
+
+  return {
+    ...data,
+    agentId: normalizedAgentId || DEFAULT_DASHBOARD_AGENT_ID,
+    state: deriveAgentStateFromEventType(data.type, data),
+  };
+}
+
+function deriveAgentStateFromEventType(
+  type: string,
+  data: any,
+): "working" | "idle" | undefined {
+  if (type === "agent-message" || type === "agent-stream") {
+    return "working";
+  }
+
+  if (type === "agent-message-final") {
+    return "idle";
+  }
+
+  if (type === "agent-lifecycle") {
+    if (data?.phase === "end" || data?.phase === "error") {
+      return "idle";
+    }
+    return "working";
+  }
+
+  return undefined;
+}
+
+function pushDashboardEvent(data: any): void {
+  if (
+    data &&
+    typeof data === "object" &&
+    typeof data.type === "string"
+  ) {
+    dashboardEventBacklog.push(data);
+    if (dashboardEventBacklog.length > DASHBOARD_EVENT_BACKLOG_LIMIT) {
+      dashboardEventBacklog.splice(
+        0,
+        dashboardEventBacklog.length - DASHBOARD_EVENT_BACKLOG_LIMIT,
+      );
+    }
+  }
 }
 
 dashboardWss.on("connection", (ws: WebSocket) => {
@@ -68,17 +138,40 @@ dashboardWss.on("connection", (ws: WebSocket) => {
 });
 
 function broadcastToDashboard(data: any) {
-  if (data && typeof data === "object" && typeof data.type === "string") {
-    dashboardEventBacklog.push(data);
-    if (dashboardEventBacklog.length > DASHBOARD_EVENT_BACKLOG_LIMIT) {
-      dashboardEventBacklog.splice(
-        0,
-        dashboardEventBacklog.length - DASHBOARD_EVENT_BACKLOG_LIMIT,
-      );
+  const normalizedData = normalizeDashboardEvent(data);
+
+  pushDashboardEvent(normalizedData);
+
+  if (
+    normalizedData &&
+    typeof normalizedData === "object" &&
+    typeof normalizedData.agentId === "string" &&
+    (normalizedData.state === "working" || normalizedData.state === "idle")
+  ) {
+    const previousState = dashboardAgentStates.get(normalizedData.agentId);
+    if (previousState !== normalizedData.state) {
+      dashboardAgentStates.set(normalizedData.agentId, normalizedData.state);
+      const statusEvent = {
+        type: "agent-status",
+        agentId: normalizedData.agentId,
+        state: normalizedData.state,
+        runId:
+          typeof normalizedData.runId === "string"
+            ? normalizedData.runId
+            : undefined,
+        ts: Date.now(),
+      };
+      pushDashboardEvent(statusEvent);
+      const statusPayload = JSON.stringify(statusEvent);
+      for (const client of connectedClients) {
+        if (client.readyState === WebSocket.OPEN) {
+          client.send(statusPayload);
+        }
+      }
     }
   }
 
-  const payload = JSON.stringify(data);
+  const payload = JSON.stringify(normalizedData);
   for (const client of connectedClients) {
     if (client.readyState === WebSocket.OPEN) {
       client.send(payload);
@@ -935,7 +1028,7 @@ async function fetchLocalGatewaySnapshot(
   });
 }
 
-function readAgentCoreConfig(): AgentCoreGatewayConfig {
+async function readAgentCoreConfig(): Promise<AgentCoreGatewayConfig> {
   const region =
     process.env["AGENTCORE_REGION"] ??
     process.env["AWS_REGION"] ??
@@ -960,11 +1053,13 @@ function readAgentCoreConfig(): AgentCoreGatewayConfig {
     throw new Error("AGENTCORE_ACTOR_ID is required for agentcore mode");
   }
 
-  const userId =
-    process.env["AGENTCORE_USER_ID"] ?? defaultAgentCoreUserId(actorId);
-  const runtimeSessionId =
-    process.env["AGENTCORE_RUNTIME_SESSION_ID"] ??
-    defaultAgentCoreRuntimeSessionId(actorId);
+  const resolvedIdentity = await resolveAgentCoreIdentity({
+    region,
+    qualifier,
+    actorId,
+    explicitUserId: process.env["AGENTCORE_USER_ID"],
+    explicitRuntimeSessionId: process.env["AGENTCORE_RUNTIME_SESSION_ID"],
+  });
   const eventPollIntervalMs = readPositiveInteger(
     process.env["AGENTCORE_EVENT_POLL_MS"],
     2000,
@@ -972,7 +1067,7 @@ function readAgentCoreConfig(): AgentCoreGatewayConfig {
   const liveWsUrl = process.env["AGENTCORE_BRIDGE_WS_URL"]
     ? buildAgentCoreBridgeWsUrl(
         process.env["AGENTCORE_BRIDGE_WS_URL"],
-        userId,
+        resolvedIdentity.userId,
         actorId,
         channel,
       )
@@ -985,8 +1080,8 @@ function readAgentCoreConfig(): AgentCoreGatewayConfig {
     qualifier,
     actorId,
     channel,
-    userId,
-    runtimeSessionId,
+    userId: resolvedIdentity.userId,
+    runtimeSessionId: resolvedIdentity.runtimeSessionId,
     liveWsUrl,
     eventPollIntervalMs,
   };
@@ -1084,6 +1179,112 @@ function defaultAgentCoreUserId(actorId: string): string {
 
 function defaultAgentCoreRuntimeSessionId(actorId: string): string {
   return `dashboard_session_${createHash("sha1").update(actorId).digest("hex").slice(0, 24)}`;
+}
+
+function inferIdentityTableName(qualifier: string): string {
+  const explicitTableName = process.env["AGENTCORE_IDENTITY_TABLE_NAME"];
+  if (explicitTableName) {
+    return explicitTableName;
+  }
+
+  const explicitSuffix =
+    process.env["AGENTCORE_ENV_SUFFIX"] ?? process.env["OPENCLAW_ENV_SUFFIX"];
+  if (explicitSuffix) {
+    return explicitSuffix === "prod"
+      ? "openclaw-identity-prod"
+      : `openclaw-identity-${explicitSuffix}`;
+  }
+
+  const qualifierSuffixMatch = qualifier.match(/_([a-z0-9-]+)$/i);
+  if (qualifierSuffixMatch) {
+    return `openclaw-identity-${qualifierSuffixMatch[1]}`;
+  }
+
+  return "openclaw-identity";
+}
+
+async function resolveAgentCoreIdentity(params: {
+  region: string;
+  qualifier: string;
+  actorId: string;
+  explicitUserId?: string;
+  explicitRuntimeSessionId?: string;
+}): Promise<{ userId: string; runtimeSessionId: string }> {
+  if (params.explicitUserId && params.explicitRuntimeSessionId) {
+    return {
+      userId: params.explicitUserId,
+      runtimeSessionId: params.explicitRuntimeSessionId,
+    };
+  }
+
+  const identityTableName = inferIdentityTableName(params.qualifier);
+  const ddb = DynamoDBDocumentClient.from(
+    new DynamoDBClient({ region: params.region }),
+  );
+
+  const fallbackUserId =
+    params.explicitUserId ?? defaultAgentCoreUserId(params.actorId);
+  const fallbackRuntimeSessionId =
+    params.explicitRuntimeSessionId ??
+    defaultAgentCoreRuntimeSessionId(params.actorId);
+
+  let resolvedUserId = params.explicitUserId ?? fallbackUserId;
+
+  if (!params.explicitUserId) {
+    const channelProfile = await ddb.send(
+      new GetCommand({
+        TableName: identityTableName,
+        Key: {
+          PK: `CHANNEL#${params.actorId}`,
+          SK: "PROFILE",
+        },
+      }),
+    );
+
+    const profileUserId =
+      typeof channelProfile.Item?.["userId"] === "string"
+        ? channelProfile.Item["userId"]
+        : null;
+
+    if (!profileUserId) {
+      throw new Error(
+        `Could not resolve AgentCore userId for actor ${params.actorId}. Set AGENTCORE_IDENTITY_TABLE_NAME correctly or provide AGENTCORE_USER_ID explicitly.`,
+      );
+    }
+
+    resolvedUserId = profileUserId;
+  }
+
+  if (params.explicitRuntimeSessionId) {
+    return {
+      userId: resolvedUserId,
+      runtimeSessionId: params.explicitRuntimeSessionId,
+    };
+  }
+
+  const sessionRecord = await ddb.send(
+    new GetCommand({
+      TableName: identityTableName,
+      Key: {
+        PK: `USER#${resolvedUserId}`,
+        SK: "SESSION",
+      },
+    }),
+  );
+
+  const resolvedRuntimeSessionId =
+    typeof sessionRecord.Item?.["sessionId"] === "string"
+      ? sessionRecord.Item["sessionId"]
+      : fallbackRuntimeSessionId;
+
+  console.log(
+    `[agentcore] Resolved actor ${params.actorId} -> userId=${resolvedUserId}, sessionId=${resolvedRuntimeSessionId}, table=${identityTableName}`,
+  );
+
+  return {
+    userId: resolvedUserId,
+    runtimeSessionId: resolvedRuntimeSessionId,
+  };
 }
 
 function buildAgentCoreBridgeWsUrl(

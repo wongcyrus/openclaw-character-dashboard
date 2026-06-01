@@ -2,6 +2,7 @@ import { useCharacterStore } from "@/store/characterStore";
 import { useWorldStore } from "@/store/worldStore";
 
 const MESSAGE_TIMEOUT_MS = 10_000;
+const DEFAULT_DASHBOARD_AGENT_ID = "main";
 
 export class LiveEventSource {
   private ws: WebSocket | null = null;
@@ -63,14 +64,22 @@ export class LiveEventSource {
 
   private handleEvent(data: any): void {
     if (data.type === "agent-message" || data.type === "agent-stream") {
-      const { agentId, content, role } = data;
-      if (!agentId) return;
-
       const worldConfig = useWorldStore.getState().worldConfig;
-      const character = worldConfig?.characters.find(c => c.agentId === agentId);
+      const normalizedAgentId =
+        typeof data.agentId === "string" && data.agentId.trim()
+          ? data.agentId
+          : worldConfig?.characters.find((c) => c.agentId === DEFAULT_DASHBOARD_AGENT_ID)
+              ?.agentId ??
+            worldConfig?.characters[0]?.agentId ??
+            DEFAULT_DASHBOARD_AGENT_ID;
+      const { content, role } = data;
+
+      const character = worldConfig?.characters.find(
+        (c) => c.agentId === normalizedAgentId,
+      );
       if (!character) {
         console.warn("[LiveEventSource] No character mapping for event", {
-          agentId,
+          agentId: normalizedAgentId,
           knownAgentIds: worldConfig?.characters.map((c) => c.agentId) ?? [],
         });
         return;
@@ -91,7 +100,7 @@ export class LiveEventSource {
       });
       console.log("[LiveEventSource] Updated character message", {
         characterId,
-        agentId,
+        agentId: normalizedAgentId,
         type: data.type,
       });
 
