@@ -1,6 +1,7 @@
 import type { MainState } from "@/store/characterStore";
 
 import type { DataSource, StateChangeEvent, StateChangeHandler } from "./mock";
+import { getAppConfig } from "./appConfig";
 
 const SNAPSHOT_POLL_MS = 20_000;
 const SESSION_ACTIVE_THRESHOLD_MS = readSessionActiveThresholdMs();
@@ -80,7 +81,8 @@ export class LiveDataSource implements DataSource {
     this.inFlight = true;
 
     try {
-      const response = await fetch("/api/openclaw/snapshot", {
+      const config = getAppConfig();
+      const response = await fetch(`${config.apiBaseUrl}/openclaw/snapshot`, {
         headers: { Accept: "application/json" },
       });
 

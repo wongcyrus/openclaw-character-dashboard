@@ -211,18 +211,20 @@ function validateReferentialIntegrity(config: WorldConfig): void {
  * fully-typed WorldConfig. Throws a descriptive error on any failure —
  * never silently falls back.
  */
-export async function loadWorldConfig(): Promise<WorldConfig> {
+export async function loadWorldConfig(assetPack?: string): Promise<WorldConfig> {
   let raw: unknown;
+  const basePath = assetPack ? `/assets/${assetPack}` : "";
+  const url = `${basePath}/world.json?t=${Date.now()}`;
 
   try {
-    const response = await fetch(`/world.json?t=${Date.now()}`);
+    const response = await fetch(url);
     if (!response.ok) {
       throw new Error(`HTTP ${response.status} ${response.statusText}`);
     }
     raw = await response.json();
   } catch (err) {
     throw new Error(
-      `Failed to fetch world.json: ${err instanceof Error ? err.message : String(err)}`,
+      `Failed to fetch ${url}: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 

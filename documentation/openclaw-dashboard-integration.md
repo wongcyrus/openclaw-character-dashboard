@@ -156,7 +156,7 @@ Used only when `OPENCLAW_BACKEND_MODE=agentcore`.
 | ------------------------------ | ------- |
 | `AGENTCORE_REGION`             | AWS region for the deployed runtime. |
 | `AGENTCORE_RUNTIME_ARN`        | Runtime ARN for the OpenClaw AgentCore deployment. |
-| `AGENTCORE_RUNTIME_ENDPOINT_ID`| Runtime endpoint qualifier, e.g. `openclaw_endpoint_dev`. |
+| `AGENTCORE_RUNTIME_ENDPOINT_ID`| Runtime endpoint ARN, e.g. `arn:aws:bedrock-agentcore:us-east-1:111964674713:runtime/openclaw_agent_dev-ZZ6NuB7dnF/runtime-endpoint/DEFAULT`. |
 | `AGENTCORE_ACTOR_ID`           | Actor identity passed to the bridge, e.g. `telegram:123456`. |
 | `AGENTCORE_CHANNEL`            | Optional channel override; defaults to the actor prefix. |
 | `AGENTCORE_IDENTITY_TABLE_NAME`| Optional explicit DynamoDB identity table name. If omitted, the server infers it from env suffix / endpoint qualifier. |
@@ -173,7 +173,7 @@ For normal usage, the minimum AgentCore config is:
 OPENCLAW_BACKEND_MODE=agentcore
 AGENTCORE_REGION=us-east-1
 AGENTCORE_RUNTIME_ARN=arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/openclaw_agent_v2_dev-abc123
-AGENTCORE_RUNTIME_ENDPOINT_ID=openclaw_endpoint_dev
+AGENTCORE_RUNTIME_ENDPOINT_ID=arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/openclaw_agent_v2_dev-abc123/runtime-endpoint/DEFAULT
 AGENTCORE_ACTOR_ID=telegram:123456
 ```
 

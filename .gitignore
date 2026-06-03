@@ -24,3 +24,5 @@ spec/
 *.log
 npm-debug.log*
 /public/*
+.antigravitycli/*
+cdk.out/*

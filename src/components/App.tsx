@@ -5,6 +5,7 @@ import { InspectorPanel } from "@/components/InspectorPanel";
 import { MockModeToggle } from "@/components/MockModeToggle";
 import { ResourceWallOverlay } from "@/components/ResourceWallOverlay";
 import { loadWorldConfig } from "@/data/worldConfig";
+import { loadAppConfig, AppConfig } from "@/data/appConfig";
 import { useWorldStore } from "@/store/worldStore";
 
 import "./App.css";
@@ -31,18 +32,33 @@ export function App(): JSX.Element {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("game-only");
 
+  const [, setAppConfig] = useState<AppConfig | null>(null);
+  const [, setSelectedAssetPack] = useState<string | undefined>(undefined);
+
   console.log("[App] VITE_BANNER_TEXT:", import.meta.env.VITE_BANNER_TEXT);
 
   useEffect(() => {
-    if (worldConfig !== null) return; // already loaded (e.g. HMR)
+    const init = async () => {
+      try {
+        const config = await loadAppConfig();
+        setAppConfig(config);
+        
+        // Use default asset pack if specified, otherwise first available
+        const defaultPack = config.defaultAssetPack || config.availableAssetPacks?.[0];
+        setSelectedAssetPack(defaultPack);
 
-    loadWorldConfig()
-      .then(setWorldConfig)
-      .catch((err: unknown) => {
+        const world = await loadWorldConfig(defaultPack);
+        setWorldConfig(world);
+      } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
         setLoadError(message);
-        console.error("[App] Failed to load world.json:", message);
-      });
+        console.error("[App] Initialization failed:", message);
+      }
+    };
+
+    if (worldConfig === null) {
+      init();
+    }
   }, [worldConfig, setWorldConfig]);
 
   useEffect(() => {

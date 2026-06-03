@@ -34,6 +34,10 @@ npx vitest run src/path/to/file.test.ts
 
 # Run tests matching a name pattern
 npx vitest run -t "test name pattern"
+
+# AWS Serverless Deployment
+npm run cdk bootstrap # Bootstrap CDK in your region
+npm run deploy        # Build and deploy to AWS
 ```
 
 ---
@@ -71,17 +75,15 @@ openclaw-character-dashboard/
 │       ├── objects/             # World object sprites
 │       └── characters/[name]/   # Per-character sprite sheets + room assets
 ├── src/
-│   ├── components/              # React components (UI shell, inspector panel)
-│   ├── game/                    # All Phaser 3 code
-│   │   ├── scenes/              # Phaser scenes (Boot, Preload, World)
-│   │   ├── objects/             # Phaser GameObjects (CharacterSprite, etc.)
-│   │   └── pathfinding/         # Pathfinding helpers wrapping Phaser tilemaps
-│   ├── hooks/                   # Custom React hooks (useGameInstance, etc.)
-│   ├── store/                   # Zustand stores
-│   ├── types/                   # Shared TypeScript types
-│   ├── utils/                   # Pure utility functions
-│   ├── data/                    # Data layer: mock.ts, live.ts, worldConfig.ts
-│   └── main.tsx
+│   ├── ...
+├── infra/                       # AWS CDK infrastructure code
+│   ├── app.ts                   # CDK entry point
+│   └── dashboard-stack.ts       # Main serverless stack definition
+├── server/
+│   ├── index.ts                 # Local Express server logic
+│   └── lambda.ts                # AWS Lambda monolithic handler
+├── shared/                      # Resource wall files (synced to S3 in serverless)
+├── cdk.json                     # CDK configuration
 ├── AGENTS.md
 └── ...config files
 ```
@@ -300,3 +302,4 @@ Prefer named exports. Only use default exports for top-level React page componen
 - `/documentation/adding-an-agent.md` — step-by-step guide: assets → `world.json` → verify
 - `/documentation/pathfinding.md` — CollisionGrid and PathFinder design and API
 - `/documentation/openclaw-dashboard-integration.md` — OpenClaw Gateway WebSocket protocol, snapshot flow, live data derivation
+- `/documentation/aws-serverless-deployment.md` — Guide for deploying to AWS S3/CloudFront/Lambda/APIGateway

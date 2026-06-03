@@ -1,5 +1,6 @@
 import { useCharacterStore } from "@/store/characterStore";
 import { useWorldStore } from "@/store/worldStore";
+import { getAppConfig } from "./appConfig";
 
 const MESSAGE_TIMEOUT_MS = 10_000;
 const DEFAULT_DASHBOARD_AGENT_ID = "main";
@@ -8,11 +9,25 @@ export class LiveEventSource {
   private ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private messageTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private isStarted = false;
+
+  constructor() {
+    this.handleVisibilityChange = this.handleVisibilityChange.bind(this);
+  }
 
   start(): void {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = window.location.host;
-    const wsUrl = `${protocol}//${host}/api/ws`;
+    if (this.isStarted) return;
+    this.isStarted = true;
+    
+    window.addEventListener("visibilitychange", this.handleVisibilityChange);
+    this.connect();
+  }
+
+  private connect(): void {
+    if (this.ws || !this.isStarted || document.hidden) return;
+
+    const config = getAppConfig();
+    const wsUrl = config.webSocketUrl || "";
 
     console.log(`[LiveEventSource] Connecting to ${wsUrl}`);
     this.ws = new WebSocket(wsUrl);
@@ -35,10 +50,15 @@ export class LiveEventSource {
       }
     };
 
-    this.ws.onclose = () => {
-      console.warn("[LiveEventSource] Disconnected, reconnecting in 5s...");
+    this.ws.onclose = (event) => {
       this.ws = null;
-      this.reconnectTimer = setTimeout(() => this.start(), 5000);
+      // Only auto-reconnect if it wasn't a clean close and we are still "started"
+      if (this.isStarted && !document.hidden && event.code !== 1000) {
+        console.warn("[LiveEventSource] Disconnected, reconnecting in 5s...");
+        this.reconnectTimer = setTimeout(() => this.connect(), 5000);
+      } else {
+        console.log("[LiveEventSource] Connection closed", { isStarted: this.isStarted, hidden: document.hidden });
+      }
     };
 
     this.ws.onerror = (err) => {
@@ -46,20 +66,37 @@ export class LiveEventSource {
     };
   }
 
-  stop(): void {
+  private disconnect(): void {
     if (this.ws) {
-      this.ws.onclose = null;
-      this.ws.close();
+      console.log("[LiveEventSource] Disconnecting...");
+      this.ws.onclose = null; // Prevent onclose from triggering reconnect
+      this.ws.close(1000, "Intentional disconnect");
       this.ws = null;
     }
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
     }
+  }
+
+  stop(): void {
+    this.isStarted = false;
+    window.removeEventListener("visibilitychange", this.handleVisibilityChange);
+
+    this.disconnect();
+    
     for (const timer of this.messageTimers.values()) {
       clearTimeout(timer);
     }
     this.messageTimers.clear();
+  }
+
+  private handleVisibilityChange(): void {
+    if (document.hidden) {
+      this.disconnect();
+    } else if (this.isStarted) {
+      this.connect();
+    }
   }
 
   private handleEvent(data: any): void {
