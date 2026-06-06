@@ -155,6 +155,8 @@ Used only when `OPENCLAW_BACKEND_MODE=agentcore`.
 | Variable                        | Purpose |
 | ------------------------------ | ------- |
 | `AGENTCORE_REGION`             | AWS region for the deployed runtime. |
+| `AGENTCORE_RUNTIME_NAME`       | Recommended stable AgentCore runtime name, e.g. `openclaw_agent_dev`. When set, the server resolves the latest READY runtime ARN automatically. |
+| `AGENTCORE_RUNTIME_ENDPOINT_NAME` | Optional endpoint name to resolve when using `AGENTCORE_RUNTIME_NAME`. Defaults to `DEFAULT`. |
 | `AGENTCORE_RUNTIME_ARN`        | Runtime ARN for the OpenClaw AgentCore deployment. |
 | `AGENTCORE_RUNTIME_ENDPOINT_ID`| Runtime endpoint ARN, e.g. `arn:aws:bedrock-agentcore:us-east-1:111964674713:runtime/openclaw_agent_dev-ZZ6NuB7dnF/runtime-endpoint/DEFAULT`. |
 | `AGENTCORE_ACTOR_ID`           | Actor identity passed to the bridge, e.g. `telegram:123456`. |
@@ -167,17 +169,21 @@ Used only when `OPENCLAW_BACKEND_MODE=agentcore`.
 
 If `AGENTCORE_BRIDGE_WS_URL` is omitted, the dashboard server falls back to polling `dashboard_events` through `InvokeAgentRuntime` and forwards those events to browser clients on `/api/ws`.
 
+`AGENTCORE_RUNTIME_NAME` takes precedence over the exact ARN variables, so you can keep a stable env file even when deployments rotate the runtime ARN.
+
 For normal usage, the minimum AgentCore config is:
 
 ```bash
 OPENCLAW_BACKEND_MODE=agentcore
 AGENTCORE_REGION=us-east-1
-AGENTCORE_RUNTIME_ARN=arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/openclaw_agent_v2_dev-abc123
-AGENTCORE_RUNTIME_ENDPOINT_ID=arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/openclaw_agent_v2_dev-abc123/runtime-endpoint/DEFAULT
+AGENTCORE_RUNTIME_NAME=openclaw_agent_dev
+AGENTCORE_RUNTIME_ENDPOINT_NAME=DEFAULT
 AGENTCORE_ACTOR_ID=telegram:123456
 ```
 
 The local server resolves the hidden internal `userId` and active `runtimeSessionId` automatically from the identity table.
+
+If you already have exact runtime and endpoint ARNs, the older `AGENTCORE_RUNTIME_ARN` + `AGENTCORE_RUNTIME_ENDPOINT_ID` configuration still works as a fallback.
 
 ---
 

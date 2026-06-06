@@ -65,10 +65,18 @@ export class DashboardServerlessStack extends Stack {
         OPENCLAW_BACKEND_MODE: process.env.OPENCLAW_BACKEND_MODE || "local",
         GATEWAY_HOST: process.env.GATEWAY_HOST || "127.0.0.1",
         AGENTCORE_REGION: process.env.AGENTCORE_REGION || "",
+        AGENTCORE_RUNTIME_NAME: process.env.AGENTCORE_RUNTIME_NAME || "",
+        AGENTCORE_RUNTIME_ENDPOINT_NAME:
+          process.env.AGENTCORE_RUNTIME_ENDPOINT_NAME || "",
         AGENTCORE_RUNTIME_ARN: process.env.AGENTCORE_RUNTIME_ARN || "",
         AGENTCORE_RUNTIME_ENDPOINT_ID: process.env.AGENTCORE_RUNTIME_ENDPOINT_ID || "",
         AGENTCORE_ACTOR_ID: process.env.AGENTCORE_ACTOR_ID || "",
         AGENTCORE_CHANNEL: process.env.AGENTCORE_CHANNEL || "",
+        AGENTCORE_IDENTITY_TABLE_NAME:
+          process.env.AGENTCORE_IDENTITY_TABLE_NAME || "",
+        AGENTCORE_USER_ID: process.env.AGENTCORE_USER_ID || "",
+        AGENTCORE_RUNTIME_SESSION_ID:
+          process.env.AGENTCORE_RUNTIME_SESSION_ID || "",
       },
     });
 
@@ -158,6 +166,8 @@ export class DashboardServerlessStack extends Stack {
         actions: [
           "bedrock-agentcore:InvokeAgentRuntime",
           "bedrock-agentcore:InvokeAgentRuntimeWithWebSocketStream",
+          "bedrock-agentcore:ListAgentRuntimes",
+          "bedrock-agentcore:ListAgentRuntimeEndpoints",
           "dynamodb:GetItem",
         ],
         resources: ["*"], 

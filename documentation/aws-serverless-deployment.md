@@ -35,11 +35,15 @@ Ensure the following variables are set if using AgentCore mode:
 ```env
 OPENCLAW_BACKEND_MODE=agentcore
 AGENTCORE_REGION=us-east-1
-AGENTCORE_RUNTIME_ARN=arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/openclaw_agent_v2_dev-abc123
-AGENTCORE_RUNTIME_ENDPOINT_ID=arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/openclaw_agent_v2_dev-abc123/runtime-endpoint/DEFAULT
+AGENTCORE_RUNTIME_NAME=openclaw_agent_dev
+AGENTCORE_RUNTIME_ENDPOINT_NAME=DEFAULT
 AGENTCORE_ACTOR_ID=telegram:123456
 AGENTCORE_CHANNEL=telegram
 ```
+
+If you prefer pinning an exact deployment, `AGENTCORE_RUNTIME_ARN` and
+`AGENTCORE_RUNTIME_ENDPOINT_ID` remain supported, but the runtime-name path is
+safer when your deployed ARN changes frequently.
 
 ## Deployment Commands
 

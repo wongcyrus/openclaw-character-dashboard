@@ -11,12 +11,14 @@ import {
   InvokeAgentRuntimeCommand,
 } from "@aws-sdk/client-bedrock-agentcore";
 import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import {
-  DynamoDBDocumentClient,
-  GetCommand,
-} from "@aws-sdk/lib-dynamodb";
+import { DynamoDBDocumentClient, GetCommand } from "@aws-sdk/lib-dynamodb";
 import { WebSocketServer, WebSocket } from "ws";
 import type { RawData } from "ws";
+
+import {
+  inferAgentCoreIdentityTableName,
+  resolveAgentCoreRuntimeTarget,
+} from "./agentcoreRuntime";
 
 type LocalGatewayConfig = {
   mode: "local";
@@ -106,11 +108,7 @@ function deriveAgentStateFromEventType(
 }
 
 function pushDashboardEvent(data: any): void {
-  if (
-    data &&
-    typeof data === "object" &&
-    typeof data.type === "string"
-  ) {
+  if (data && typeof data === "object" && typeof data.type === "string") {
     dashboardEventBacklog.push(data);
     if (dashboardEventBacklog.length > DASHBOARD_EVENT_BACKLOG_LIMIT) {
       dashboardEventBacklog.splice(
@@ -123,7 +121,9 @@ function pushDashboardEvent(data: any): void {
 
 dashboardWss.on("connection", (ws: WebSocket) => {
   connectedClients.add(ws);
-  console.log(`[dashboard-ws] Client connected (total: ${connectedClients.size})`);
+  console.log(
+    `[dashboard-ws] Client connected (total: ${connectedClients.size})`,
+  );
 
   for (const event of dashboardEventBacklog) {
     if (ws.readyState === WebSocket.OPEN) {
@@ -133,7 +133,9 @@ dashboardWss.on("connection", (ws: WebSocket) => {
 
   ws.on("close", () => {
     connectedClients.delete(ws);
-    console.log(`[dashboard-ws] Client disconnected (total: ${connectedClients.size})`);
+    console.log(
+      `[dashboard-ws] Client disconnected (total: ${connectedClients.size})`,
+    );
   });
 });
 
@@ -242,7 +244,9 @@ app.use(express.json());
 
 const DIST_PATH = path.join(process.cwd(), "dist");
 if (existsSync(DIST_PATH)) {
-  console.warn(`[resource-wall server] Serving static files from: ${DIST_PATH}`);
+  console.warn(
+    `[resource-wall server] Serving static files from: ${DIST_PATH}`,
+  );
   app.use(express.static(DIST_PATH));
 }
 
@@ -251,16 +255,19 @@ if (existsSync(DIST_PATH)) {
 // Proxies a live OpenClaw gateway snapshot over HTTP for the frontend.
 // ---------------------------------------------------------------------------
 
-app.get("/api/openclaw/snapshot", async (_req: Request, res: Response): Promise<void> => {
-  try {
-    const payload = await fetchGatewaySnapshot(gatewayConfigPromise);
-    res.status(200).json(payload);
-  } catch (error) {
-    res.status(500).json({
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
-});
+app.get(
+  "/api/openclaw/snapshot",
+  async (_req: Request, res: Response): Promise<void> => {
+    try {
+      const payload = await fetchGatewaySnapshot(gatewayConfigPromise);
+      res.status(200).json(payload);
+    } catch (error) {
+      res.status(500).json({
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  },
+);
 
 // ---------------------------------------------------------------------------
 // GET /api/files?path=<relative>
@@ -368,12 +375,12 @@ function sanitiseRelPath(raw: unknown): string {
 
 function startServer(port: number): void {
   const server = app.listen(port, "0.0.0.0", () => {
-    console.warn(
-      `[resource-wall server] Listening on http://0.0.0.0:${port}`,
-    );
+    console.warn(`[resource-wall server] Listening on http://0.0.0.0:${port}`);
     console.warn(`[resource-wall server] CWD: ${process.cwd()}`);
     console.warn(`[resource-wall server] Serving files from: ${SHARED_ROOT}`);
-    console.warn(`[resource-wall server] OpenClaw Home is set to: ${OPENCLAW_HOME}`);
+    console.warn(
+      `[resource-wall server] OpenClaw Home is set to: ${OPENCLAW_HOME}`,
+    );
 
     void gatewayConfigPromise.then((config) => {
       if (config.mode === "local") {
@@ -423,7 +430,9 @@ function startServer(port: number): void {
   });
 }
 
-function createDashboardMonitor(config: GatewayConfig): DashboardMonitor | null {
+function createDashboardMonitor(
+  config: GatewayConfig,
+): DashboardMonitor | null {
   if (config.mode === "local") {
     return new GatewayEventMonitor(config);
   }
@@ -447,7 +456,9 @@ class GatewayEventMonitor {
 
   start() {
     if (!this.shouldReconnect) return;
-    console.log(`[monitor] Connecting to ${this.config.wsUrl} (token length: ${this.config.token.length})...`);
+    console.log(
+      `[monitor] Connecting to ${this.config.wsUrl} (token length: ${this.config.token.length})...`,
+    );
     this.ws = new WebSocket(this.config.wsUrl, {
       origin: this.config.httpUrl,
     });
@@ -493,25 +504,30 @@ class GatewayEventMonitor {
         if (message.event === "chat") {
           const runId = payload.runId || "unknown";
           const messageData = payload.message || {};
-          
+
           // Capture role if present, otherwise fallback to cached role for this run
-          let role = (typeof messageData.role === "string" ? messageData.role : "").toLowerCase();
+          let role = (
+            typeof messageData.role === "string" ? messageData.role : ""
+          ).toLowerCase();
           if (role) {
             this.runRoles.set(runId, role);
           } else {
             role = this.runRoles.get(runId) || "assistant";
           }
 
-          const content = typeof messageData.content === "string" 
-            ? messageData.content 
-            : Array.isArray(messageData.content)
-              ? messageData.content.map((p: any) => p.text || "").join("")
-              : typeof messageData.text === "string"
-                ? messageData.text
-                : "";
+          const content =
+            typeof messageData.content === "string"
+              ? messageData.content
+              : Array.isArray(messageData.content)
+                ? messageData.content.map((p: any) => p.text || "").join("")
+                : typeof messageData.text === "string"
+                  ? messageData.text
+                  : "";
 
           if (content) {
-            console.log(`[AGENT MESSAGE] [${runId}] ${role.toUpperCase()}: ${content}`);
+            console.log(
+              `[AGENT MESSAGE] [${runId}] ${role.toUpperCase()}: ${content}`,
+            );
             broadcastToDashboard({
               type: "agent-message",
               runId,
@@ -523,7 +539,11 @@ class GatewayEventMonitor {
           }
 
           // Cleanup role cache on final/error states
-          if (payload.state === "final" || payload.state === "error" || payload.state === "aborted") {
+          if (
+            payload.state === "final" ||
+            payload.state === "error" ||
+            payload.state === "aborted"
+          ) {
             this.runRoles.delete(runId);
             broadcastToDashboard({
               type: "agent-message-final",
@@ -536,35 +556,43 @@ class GatewayEventMonitor {
           const stream = payload.stream || "unknown";
           const runId = payload.runId || "none";
           if (payload.data && payload.data.chunk) {
-             console.log(`[AGENT STREAM] [${runId}] ${stream.toUpperCase()}: ${payload.data.chunk}`);
-             broadcastToDashboard({
-               type: "agent-stream",
-               runId,
-               stream,
-               chunk: payload.data.chunk,
-               agentId: agentIdFromSessionKey(payload.sessionKey),
-             });
+            console.log(
+              `[AGENT STREAM] [${runId}] ${stream.toUpperCase()}: ${payload.data.chunk}`,
+            );
+            broadcastToDashboard({
+              type: "agent-stream",
+              runId,
+              stream,
+              chunk: payload.data.chunk,
+              agentId: agentIdFromSessionKey(payload.sessionKey),
+            });
           } else if (payload.data && payload.data.phase) {
-             console.log(`[AGENT LIFECYCLE] [${runId}] PHASE: ${payload.data.phase}`);
-             broadcastToDashboard({
-               type: "agent-lifecycle",
-               runId,
-               phase: payload.data.phase,
-               agentId: agentIdFromSessionKey(payload.sessionKey),
-             });
-             if (payload.data.phase === "end" || payload.data.phase === "error") {
-               this.runRoles.delete(runId);
-             }
+            console.log(
+              `[AGENT LIFECYCLE] [${runId}] PHASE: ${payload.data.phase}`,
+            );
+            broadcastToDashboard({
+              type: "agent-lifecycle",
+              runId,
+              phase: payload.data.phase,
+              agentId: agentIdFromSessionKey(payload.sessionKey),
+            });
+            if (
+              payload.data.phase === "end" ||
+              payload.data.phase === "error"
+            ) {
+              this.runRoles.delete(runId);
+            }
           }
         }
       } else if (message.type === "res" && message.id === "connect") {
         if (message.ok) {
           console.log(`[monitor] Successfully connected to gateway`);
         } else {
-          console.error(`[monitor] Gateway connect failed: ${message.error?.message}`);
+          console.error(
+            `[monitor] Gateway connect failed: ${message.error?.message}`,
+          );
         }
       }
-
     });
 
     this.ws.on("close", () => {
@@ -625,7 +653,9 @@ class AgentCoreBridgeMonitor {
     });
 
     this.ws.on("error", (err: Error) => {
-      console.error(`[monitor] AgentCore bridge WebSocket error: ${err.message}`);
+      console.error(
+        `[monitor] AgentCore bridge WebSocket error: ${err.message}`,
+      );
     });
   }
 
@@ -697,7 +727,6 @@ class AgentCorePollingMonitor {
     }
   }
 }
-
 
 function loadServerEnv(): void {
   const envDir = process.cwd();
@@ -798,7 +827,9 @@ async function readGatewayConfig(): Promise<GatewayConfig> {
     };
   } catch (err) {
     const port = 18789;
-    console.warn(`[gateway] Could not read config at ${configPath}, using defaults. Error: ${err instanceof Error ? err.message : String(err)}`);
+    console.warn(
+      `[gateway] Could not read config at ${configPath}, using defaults. Error: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return {
       mode: "local",
       httpUrl: `http://${gatewayHost}:${port}`,
@@ -861,7 +892,9 @@ async function fetchLocalGatewaySnapshot(
         rejectAllPending(error);
         reject(error);
       } else {
-        console.log(`[gateway] Successfully fetched snapshot from ${gatewayConfig.httpUrl}`);
+        console.log(
+          `[gateway] Successfully fetched snapshot from ${gatewayConfig.httpUrl}`,
+        );
         resolve(result.value);
       }
     };
@@ -1033,29 +1066,31 @@ async function readAgentCoreConfig(): Promise<AgentCoreGatewayConfig> {
     process.env["AGENTCORE_REGION"] ??
     process.env["AWS_REGION"] ??
     process.env["AWS_DEFAULT_REGION"];
-  const runtimeArn = process.env["AGENTCORE_RUNTIME_ARN"] ?? "";
-  const qualifier = process.env["AGENTCORE_RUNTIME_ENDPOINT_ID"] ?? "";
   const actorId = process.env["AGENTCORE_ACTOR_ID"] ?? "";
   const channel =
     process.env["AGENTCORE_CHANNEL"] ??
     (actorId.includes(":") ? actorId.split(":", 1)[0] : "test");
 
   if (!region) {
-    throw new Error("AGENTCORE_REGION or AWS_REGION is required for agentcore mode");
-  }
-  if (!runtimeArn) {
-    throw new Error("AGENTCORE_RUNTIME_ARN is required for agentcore mode");
-  }
-  if (!qualifier) {
-    throw new Error("AGENTCORE_RUNTIME_ENDPOINT_ID is required for agentcore mode");
+    throw new Error(
+      "AGENTCORE_REGION or AWS_REGION is required for agentcore mode",
+    );
   }
   if (!actorId) {
     throw new Error("AGENTCORE_ACTOR_ID is required for agentcore mode");
   }
 
+  const runtimeTarget = await resolveAgentCoreRuntimeTarget({
+    region,
+    runtimeName: process.env["AGENTCORE_RUNTIME_NAME"],
+    endpointName: process.env["AGENTCORE_RUNTIME_ENDPOINT_NAME"],
+    runtimeArn: process.env["AGENTCORE_RUNTIME_ARN"],
+    qualifier: process.env["AGENTCORE_RUNTIME_ENDPOINT_ID"],
+  });
+
   const resolvedIdentity = await resolveAgentCoreIdentity({
     region,
-    qualifier,
+    qualifier: runtimeTarget.qualifier,
     actorId,
     explicitUserId: process.env["AGENTCORE_USER_ID"],
     explicitRuntimeSessionId: process.env["AGENTCORE_RUNTIME_SESSION_ID"],
@@ -1076,8 +1111,8 @@ async function readAgentCoreConfig(): Promise<AgentCoreGatewayConfig> {
   return {
     mode: "agentcore",
     region,
-    runtimeArn,
-    qualifier,
+    runtimeArn: runtimeTarget.runtimeArn,
+    qualifier: runtimeTarget.qualifier,
     actorId,
     channel,
     userId: resolvedIdentity.userId,
@@ -1181,28 +1216,6 @@ function defaultAgentCoreRuntimeSessionId(actorId: string): string {
   return `dashboard_session_${createHash("sha1").update(actorId).digest("hex").slice(0, 24)}`;
 }
 
-function inferIdentityTableName(qualifier: string): string {
-  const explicitTableName = process.env["AGENTCORE_IDENTITY_TABLE_NAME"];
-  if (explicitTableName) {
-    return explicitTableName;
-  }
-
-  const explicitSuffix =
-    process.env["AGENTCORE_ENV_SUFFIX"] ?? process.env["OPENCLAW_ENV_SUFFIX"];
-  if (explicitSuffix) {
-    return explicitSuffix === "prod"
-      ? "openclaw-identity-prod"
-      : `openclaw-identity-${explicitSuffix}`;
-  }
-
-  const qualifierSuffixMatch = qualifier.match(/_([a-z0-9-]+)$/i);
-  if (qualifierSuffixMatch) {
-    return `openclaw-identity-${qualifierSuffixMatch[1]}`;
-  }
-
-  return "openclaw-identity";
-}
-
 async function resolveAgentCoreIdentity(params: {
   region: string;
   qualifier: string;
@@ -1217,7 +1230,12 @@ async function resolveAgentCoreIdentity(params: {
     };
   }
 
-  const identityTableName = inferIdentityTableName(params.qualifier);
+  const identityTableName = inferAgentCoreIdentityTableName({
+    qualifier: params.qualifier,
+    explicitTableName: process.env["AGENTCORE_IDENTITY_TABLE_NAME"],
+    explicitSuffix:
+      process.env["AGENTCORE_ENV_SUFFIX"] ?? process.env["OPENCLAW_ENV_SUFFIX"],
+  });
   const ddb = DynamoDBDocumentClient.from(
     new DynamoDBClient({ region: params.region }),
   );
@@ -1306,7 +1324,10 @@ function buildAgentCoreBridgeWsUrl(
   return url.toString();
 }
 
-function readPositiveInteger(rawValue: string | undefined, fallback: number): number {
+function readPositiveInteger(
+  rawValue: string | undefined,
+  fallback: number,
+): number {
   const parsed = Number(rawValue);
   if (!Number.isFinite(parsed) || parsed <= 0) {
     return fallback;
