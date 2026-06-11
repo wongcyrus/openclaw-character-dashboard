@@ -153,6 +153,9 @@ OPENCLAW_HOME=/你的/.openclaw路徑
 | `SHARED_ROOT`                      | 資源牆檔案瀏覽根目錄                               | `<OPENCLAW_HOME>/shared` |
 | `VITE_SESSION_ACTIVE_THRESHOLD_MS` | 智能體被判定為「工作中」的最近活動時間閾值（毫秒） | `10000`                  |
 | `VITE_BANNER_TEXT`                 | 看板頂部橫幅顯示的文字                             | `OpenClaw Dashboard`     |
+| `VITE_COGNITO_REGION`              | 部署的 AWS Cognito 區域 (選填，雲端部署用)         | 無                       |
+| `VITE_COGNITO_USER_POOL_ID`        | AWS Cognito User Pool ID (選填，雲端部署用)        | 無                       |
+| `VITE_COGNITO_CLIENT_ID`           | AWS Cognito Client ID (選填，雲端部署用)           | 無                       |
 
 一般情況下只需修改 `OPENCLAW_HOME`，其餘項保持預設即可。
 

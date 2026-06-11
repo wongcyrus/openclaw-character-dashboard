@@ -39,6 +39,11 @@ AGENTCORE_RUNTIME_NAME=openclaw_agent_dev
 AGENTCORE_RUNTIME_ENDPOINT_NAME=DEFAULT
 AGENTCORE_ACTOR_ID=telegram:123456
 AGENTCORE_CHANNEL=telegram
+
+# Frontend Authentication (Cognito)
+VITE_COGNITO_REGION=us-east-1
+VITE_COGNITO_USER_POOL_ID=us-east-1_XXXXX
+VITE_COGNITO_CLIENT_ID=xxxxxxxxxxxxxx
 ```
 
 If you prefer pinning an exact deployment, `AGENTCORE_RUNTIME_ARN` and

@@ -153,6 +153,9 @@ Replace `/path/to/your/.openclaw` with the actual path to your OpenClaw folder. 
 | `SHARED_ROOT`                      | Folder shown in the resource wall                                | `<OPENCLAW_HOME>/shared` |
 | `VITE_SESSION_ACTIVE_THRESHOLD_MS` | How many milliseconds of recent activity make an agent "working" | `10000`                  |
 | `VITE_BANNER_TEXT`                 | Text displayed in the top banner of the dashboard                | `OpenClaw Dashboard`     |
+| `VITE_COGNITO_REGION`              | AWS Cognito Region (optional, for AWS deployment)                | none                     |
+| `VITE_COGNITO_USER_POOL_ID`        | AWS Cognito User Pool ID (optional, for AWS deployment)          | none                     |
+| `VITE_COGNITO_CLIENT_ID`           | AWS Cognito Client ID (optional, for AWS deployment)             | none                     |
 
 You only need to change `OPENCLAW_HOME`. The rest have sensible defaults.
 
