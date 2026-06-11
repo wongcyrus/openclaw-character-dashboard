@@ -37,8 +37,10 @@ export class LiveEventSource {
     };
 
     this.ws.onmessage = (event) => {
+      console.log("[LiveEventSource] Raw WebSocket message received:", event.data);
       try {
         const data = JSON.parse(event.data);
+        console.log("[LiveEventSource] Parsed WebSocket message:", data);
         console.log("[LiveEventSource] Event received", {
           type: data?.type,
           agentId: data?.agentId,
