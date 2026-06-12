@@ -1,0 +1,64 @@
+graph TB
+    %% Client Tier
+    Client["Web Browser <br> (User Dashboard UI)"]
+
+    %% Edge Tier (CloudFront CDN)
+    CloudFront["Amazon CloudFront <br> CDN Distribution"]
+
+    %% Static Website Storage (S3)
+    subgraph WebsiteStorage ["Private Website Hosting"]
+        S3Website["S3 Website Bucket <br> (index.html & assets)"]
+        FrierenPack["S3 Assets: /assets/frieren"]
+        TamonPack["S3 Assets: /assets/tamon"]
+    end
+
+    %% API Ingress Gateway Tier
+    subgraph ApiIngress ["API Ingress Tier"]
+        RestApi["API Gateway REST API <br> (Proxy Route: /api/*)"]
+        WsApi["API Gateway WebSocket API <br> (Real-Time Communication)"]
+    end
+
+    %% Compute Tier
+    BackendLambda["Backend Node.js Lambda <br> (Serverless Controller)"]
+
+    %% Storage & Resources Tier
+    subgraph DatabaseAndStorage ["Data & Shared Assets Tier"]
+        DynamoDb["DynamoDB Connections Table <br> (openclaw-connections)"]
+        S3Shared["S3 Shared Files Bucket <br> (Resource Wall Docs)"]
+    end
+
+    %% Downstream Service Integration
+    Bedrock["Amazon Bedrock <br> AgentCore Runtime"]
+
+    %% Relationships / Flow Connections %%
+    Client -->|1. HTTPS Request| CloudFront
+    CloudFront -->|2a. Resolve Static Files / Assets| S3Website
+    CloudFront -->|2b. Route /api/*| RestApi
+    Client -->|3. Establish connection: wss://| WsApi
+
+    %% Routing to Compute
+    RestApi -->|4. Forward HTTP REST| BackendLambda
+    WsApi -->|5. Forward WebSocket Payload| BackendLambda
+
+    %% Compute interactions
+    BackendLambda -->|6a. Save/Delete socket state| DynamoDb
+    BackendLambda -->|6b. Retrieve Resource Wall files| S3Shared
+    BackendLambda -->|6c. Manage client connections| WsApi
+    BackendLambda -->|7. Optional Invoke Agent| Bedrock
+
+    %% CSS Styles / Classes %%
+    classDef ClientStyle fill:#F5F5F7,stroke:#9E9E9E,stroke-width:2px,color:#1C1C1E;
+    classDef EdgeStyle fill:#3F51B5,stroke:#303F9F,stroke-width:2px,color:#FFFFFF;
+    classDef S3Style fill:#1A5F7A,stroke:#103F54,stroke-width:2px,color:#FFFFFF;
+    classDef GatewayStyle fill:#E65100,stroke:#B26A00,stroke-width:2px,color:#FFFFFF;
+    classDef LambdaStyle fill:#FF9900,stroke:#D68100,stroke-width:2px,color:#FFFFFF;
+    classDef DBStyle fill:#1565C0,stroke:#0D47A1,stroke-width:2px,color:#FFFFFF;
+    classDef DownstreamStyle fill:#7B2CBF,stroke:#5A189A,stroke-width:2px,color:#FFFFFF;
+
+    class Client ClientStyle;
+    class CloudFront EdgeStyle;
+    class S3Website,FrierenPack,TamonPack,S3Shared S3Style;
+    class RestApi,WsApi GatewayStyle;
+    class BackendLambda LambdaStyle;
+    class DynamoDb DBStyle;
+    class Bedrock DownstreamStyle;

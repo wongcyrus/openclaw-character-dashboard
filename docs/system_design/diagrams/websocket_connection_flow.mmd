@@ -1,0 +1,29 @@
+sequenceDiagram
+    autonumber
+    participant Client as Client Browser UI
+    participant WsApi as API Gateway WebSocket
+    participant Lambda as Backend Lambda
+    participant DynamoDb as DynamoDB Connections
+
+    Note over Client, DynamoDb: 1. Connection Establishment Lifecycle ($connect)
+    Client->>WsApi: Connect (GET wss://.../prod)
+    WsApi->>Lambda: Synchronous Proxy ($connect)
+    Lambda->>DynamoDb: Store Connection (Put connectionId & State)
+    DynamoDb-->>Lambda: Put Success
+    Lambda-->>WsApi: Return HTTP 200 OK
+    WsApi-->>Client: 101 Switching Protocols (Connection Established)
+
+    Note over Client, DynamoDb: 2. Bidirectional Messaging & Push Stream
+    Client->>WsApi: Send Message Action (action: "subscribe" / "chat")
+    WsApi->>Lambda: Forward Payload ($default route)
+    Lambda->>Lambda: Process Message (or Query Bedrock AgentCore)
+    Lambda->>WsApi: Push Response Payload (PostToConnection API)
+    WsApi-->>Client: Receive Real-Time Stream (WebSocket Message)
+
+    Note over Client, DynamoDb: 3. Connection Termination Lifecycle ($disconnect)
+    Client->>WsApi: Close Connection (or network timeout)
+    WsApi->>Lambda: Synchronous Proxy ($disconnect)
+    Lambda->>DynamoDb: Delete Connection (Delete connectionId)
+    DynamoDb-->>Lambda: Delete Success
+    Lambda-->>WsApi: Return HTTP 200 OK
+    WsApi-->>Client: Connection Closed
