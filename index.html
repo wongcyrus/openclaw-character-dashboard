@@ -190,7 +190,7 @@
     <div id="root" style="display: none;"></div>
     
   
-    <script>
+    <script type="module">
     // --- Cognito REST API Authentication Integration ---
     let cognitoConfig = {
       region: "%VITE_COGNITO_REGION%",
@@ -370,10 +370,7 @@
       if (useSessionGuard) {
         startSessionGuard();
       }
-      const script = document.createElement('script');
-      script.type = 'module';
-      script.src = '/src/main.tsx';
-      document.body.appendChild(script);
+      import('/src/main.tsx').catch(err => console.error("Failed to load React app:", err));
     }
 
     window.addEventListener('DOMContentLoaded', initAuthFlow);
