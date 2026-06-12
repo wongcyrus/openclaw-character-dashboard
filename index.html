@@ -331,6 +331,8 @@
     function handleLogout() {
       forceSessionLogout();
     }
+    
+    window.handleLoginSubmit = handleLoginSubmit;
 
     async function initAuthFlow() {
       await loadCognitoConfig();
