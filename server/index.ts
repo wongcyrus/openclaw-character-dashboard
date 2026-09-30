@@ -314,10 +314,10 @@ class GatewayEventMonitor {
                 minProtocol: 4,
                 maxProtocol: 4,
                 client: {
-                  id: "openclaw-control-ui",
+                  id: "gateway-client",
                   version: "openclaw-character-dashboard-monitor",
                   platform: "node",
-                  mode: "webchat",
+                  mode: "backend",
                   instanceId: "openclaw-character-dashboard-monitor",
                 },
                 role: "operator",
