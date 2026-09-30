@@ -294,9 +294,7 @@ class GatewayEventMonitor {
     console.log(
       `[monitor] Connecting to ${this.config.wsUrl} (token length: ${this.config.token.length})...`,
     );
-    this.ws = new WebSocket(this.config.wsUrl, {
-      headers: { Origin: this.config.httpUrl },
-    });
+    this.ws = new WebSocket(this.config.wsUrl);
 
     this.ws.on("message", (data: RawData) => {
       const rawString = String(data);
@@ -562,9 +560,7 @@ async function fetchGatewaySnapshot(
   console.log(`[gateway] Attempting connection to ${gatewayConfig.wsUrl}...`);
 
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(gatewayConfig.wsUrl, {
-      headers: { Origin: gatewayConfig.httpUrl },
-    });
+    const ws = new WebSocket(gatewayConfig.wsUrl);
 
     let requestSeq = 1;
     let settled = false;
@@ -651,10 +647,10 @@ async function fetchGatewaySnapshot(
               minProtocol: 4,
               maxProtocol: 4,
               client: {
-                id: "openclaw-control-ui",
+                id: "gateway-client",
                 version: "openclaw-character-dashboard-dev-server",
                 platform: "node",
-                mode: "webchat",
+                mode: "backend",
                 instanceId: "openclaw-character-dashboard-dev-server",
               },
               role: "operator",
