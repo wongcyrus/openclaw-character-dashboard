@@ -125,17 +125,19 @@ export class LiveEventSource {
       }
 
       const characterId = character.id;
-      
+
       // Update store
-      const currentMessage = useCharacterStore.getState().characterMessages[characterId];
-      const newText = data.type === "agent-stream" 
-        ? (currentMessage?.text || "") + data.chunk
-        : content;
+      const currentMessage =
+        useCharacterStore.getState().characterMessages[characterId];
+      const newText =
+        data.type === "agent-stream"
+          ? (currentMessage?.text || "") + data.chunk
+          : content;
 
       useCharacterStore.getState().setCharacterMessage(characterId, {
         text: newText,
         role: role || currentMessage?.role || "assistant",
-        timestamp: Date.now()
+        timestamp: Date.now(),
       });
       console.log("[LiveEventSource] Updated character message", {
         characterId,
@@ -154,6 +156,16 @@ export class LiveEventSource {
       }, MESSAGE_TIMEOUT_MS);
 
       this.messageTimers.set(characterId, timer);
+    } else if (data.type === "agent-lifecycle") {
+      if (data.phase === "end" || data.phase === "error") {
+        const worldConfig = useWorldStore.getState().worldConfig;
+        const character = worldConfig?.characters.find(
+          (c) => c.agentId === data.agentId,
+        );
+        if (character) {
+          useCharacterStore.getState().setCharacterMessage(character.id, null);
+        }
+      }
     }
   }
 }

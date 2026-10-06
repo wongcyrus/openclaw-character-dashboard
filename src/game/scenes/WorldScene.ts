@@ -222,19 +222,17 @@ export class WorldScene extends Phaser.Scene {
     });
 
     // Subscribe to character messages to show/hide speech bubbles
-    useCharacterStore.subscribe(
-      (state) => {
-        const messages = state.characterMessages;
-        for (const [charId, record] of this.characters.entries()) {
-          const msg = messages[charId];
-          if (msg) {
-            record.sprite.showSpeech(msg.text);
-          } else {
-            record.sprite.hideSpeech();
-          }
+    useCharacterStore.subscribe((state) => {
+      const messages = state.characterMessages;
+      for (const [charId, record] of this.characters.entries()) {
+        const msg = messages[charId];
+        if (msg) {
+          record.sprite.showSpeech(msg.text);
+        } else {
+          record.sprite.hideSpeech();
         }
       }
-    );
+    });
   }
 
   update(_time: number, delta: number): void {
@@ -520,7 +518,9 @@ export class WorldScene extends Phaser.Scene {
     record.sofaLeaveTimer = null;
   }
 
-  private findWalkableRoomPoint(roomId: string): { x: number; y: number } | null {
+  private findWalkableRoomPoint(
+    roomId: string,
+  ): { x: number; y: number } | null {
     const room = this.config.rooms.find((r) => r.id === roomId);
     if (!room) return null;
 
@@ -556,7 +556,10 @@ export class WorldScene extends Phaser.Scene {
 
     const standingOccupants = Array.from(this.characters.entries()).flatMap(
       ([otherCharacterId, record]) => {
-        if (otherCharacterId === characterId || record.subState !== "standing") {
+        if (
+          otherCharacterId === characterId ||
+          record.subState !== "standing"
+        ) {
           return [];
         }
 
@@ -572,11 +575,21 @@ export class WorldScene extends Phaser.Scene {
       const px = room.x + Math.random() * room.width;
       const py = room.y + Math.random() * room.height;
       const candidate = this.collisionGrid.worldToGrid(px, py);
-      if (!this.isStandingCandidate(candidate.gx, candidate.gy, standingOccupants, characterId)) {
+      if (
+        !this.isStandingCandidate(
+          candidate.gx,
+          candidate.gy,
+          standingOccupants,
+          characterId,
+        )
+      ) {
         continue;
       }
 
-      const center = this.collisionGrid.gridCenterToWorld(candidate.gx, candidate.gy);
+      const center = this.collisionGrid.gridCenterToWorld(
+        candidate.gx,
+        candidate.gy,
+      );
       return { x: center.px, y: center.py };
     }
 

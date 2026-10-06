@@ -1405,7 +1405,7 @@
     },
     {
       "id": "land",
-      "agentId": "communication-manager",
+      "agentId": "communication_manager",
       "name": "Land",
       "privateRoomId": "private-land",
       "spriteSheet": {

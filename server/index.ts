@@ -124,7 +124,6 @@ dashboardWss.on("connection", (ws: WebSocket) => {
   console.log(
     `[dashboard-ws] Client connected (total: ${connectedClients.size})`,
   );
-
   for (const event of dashboardEventBacklog) {
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify(event));
@@ -459,9 +458,7 @@ class GatewayEventMonitor {
     console.log(
       `[monitor] Connecting to ${this.config.wsUrl} (token length: ${this.config.token.length})...`,
     );
-    this.ws = new WebSocket(this.config.wsUrl, {
-      origin: this.config.httpUrl,
-    });
+    this.ws = new WebSocket(this.config.wsUrl);
 
     this.ws.on("message", (data: RawData) => {
       const rawString = String(data);
@@ -476,13 +473,13 @@ class GatewayEventMonitor {
               id: "connect",
               method: "connect",
               params: {
-                minProtocol: 3,
-                maxProtocol: 3,
+                minProtocol: 4,
+                maxProtocol: 4,
                 client: {
-                  id: "openclaw-control-ui",
+                  id: "gateway-client",
                   version: "openclaw-character-dashboard-monitor",
                   platform: "node",
-                  mode: "webchat",
+                  mode: "backend",
                   instanceId: "openclaw-character-dashboard-monitor",
                 },
                 role: "operator",
@@ -856,9 +853,7 @@ async function fetchLocalGatewaySnapshot(
   console.log(`[gateway] Attempting connection to ${gatewayConfig.wsUrl}...`);
 
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(gatewayConfig.wsUrl, {
-      origin: gatewayConfig.httpUrl,
-    });
+    const ws = new WebSocket(gatewayConfig.wsUrl);
 
     let requestSeq = 1;
     let settled = false;
@@ -942,13 +937,13 @@ async function fetchLocalGatewaySnapshot(
             id: "connect",
             method: "connect",
             params: {
-              minProtocol: 3,
-              maxProtocol: 3,
+              minProtocol: 4,
+              maxProtocol: 4,
               client: {
-                id: "openclaw-control-ui",
+                id: "gateway-client",
                 version: "openclaw-character-dashboard-dev-server",
                 platform: "node",
-                mode: "webchat",
+                mode: "backend",
                 instanceId: "openclaw-character-dashboard-dev-server",
               },
               role: "operator",
