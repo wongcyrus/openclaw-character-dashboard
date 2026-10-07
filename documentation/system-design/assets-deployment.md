@@ -25,8 +25,14 @@ OpenClaw solves this by dynamically generating client configurations at deployme
     {
       "apiBaseUrl": "https://{cloudfront-domain}/api",
       "webSocketUrl": "wss://{api-id}.execute-api.{region}.amazonaws.com/prod",
+      "eventPollUrl": "https://{cloudfront-domain}/api/openclaw/events",
       "availableAssetPacks": ["frieren", "tamon"],
-      "defaultAssetPack": "frieren"
+      "defaultAssetPack": "frieren",
+      "cognito": {
+        "region": "us-east-1",
+        "userPoolId": "us-east-1_example",
+        "clientId": "example-client"
+      }
     }
     ```
 4.  **S3 Deploy**: This JSON is uploaded directly alongside the main bundle to the S3 website bucket. When the user loads the dashboard, the React frontend dynamically fetches `/config.json` first, resolving target endpoints on-the-fly.

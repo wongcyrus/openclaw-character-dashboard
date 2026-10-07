@@ -1,5 +1,12 @@
 # WebSocket Connection Lifecycle Specification
 
+> **Legacy compatibility path:** The infrastructure described here remains
+> deployed, but the current AgentCore browser client does not use it for message
+> events. The browser polls the Cognito-protected
+> `/api/openclaw/events?since=<seq>` REST endpoint. A future push implementation
+> needs an authenticated producer that forwards AgentCore events through API
+> Gateway Management API.
+
 ## Architectural Sequence Diagrams
 
 ### Standard Sequence Flowchart

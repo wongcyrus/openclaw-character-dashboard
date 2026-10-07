@@ -21,6 +21,24 @@ OpenClaw Character Dashboard 可以把你的 [OpenClaw](https://github.com/openc
 
 ---
 
+## 文件索引 / Documentation Index
+
+所有開發、部署與架構文件統一存放在
+[`documentation/`](./documentation/)；完整索引請參閱
+[`documentation/README.md`](./documentation/README.md)。
+
+| 文件 | 內容 |
+| --- | --- |
+| [AWS Serverless Deployment](./documentation/aws-serverless-deployment.md) | AWS CDK 部署、Cognito 登入/API 保護與 AgentCore 設定 |
+| [OpenClaw Dashboard Integration](./documentation/openclaw-dashboard-integration.md) | OpenClaw Gateway、AgentCore snapshot 與事件 polling 流程 |
+| [Project Structure](./documentation/project-structure.md) | 專案目錄、資料流程及程式責任範圍 |
+| [World JSON Reference](./documentation/world-json-reference.md) | `world.json` 與 `clip-defs.json` 完整規格 |
+| [Adding an Agent](./documentation/adding-an-agent.md) | 新增 Agent、角色素材及私人房間 |
+| [Pathfinding](./documentation/pathfinding.md) | 碰撞網格與尋路設計 |
+| [System Design](./documentation/system-design/overview.md) | AWS 架構與系統設計圖 |
+
+---
+
 ## 開始之前
 
 你需要：

@@ -11,12 +11,15 @@ openclaw-character-dashboard/
 ├── plan/           # TODO lists and planning notes
 │   └── TODO.md
 ├── documentation/  # Developer/agent reference docs (this folder)
+│   ├── README.md                  # Documentation index
 │   ├── project-structure.md
 │   ├── world-json-reference.md
 │   ├── adding-an-agent.md
 │   ├── pathfinding.md
 │   ├── openclaw-dashboard-integration.md
-│   └── images/                    # Screenshots and diagrams for docs
+│   ├── aws-serverless-deployment.md
+│   ├── system-design/             # Architecture docs, Mermaid sources, generated diagrams
+│   └── images/                    # Screenshots used by root guides
 ├── public/ / custom public dir # Asset root selected by VITE_PUBLIC_DIR
 │   ├── world.json              # World definition — single source of truth
 │   ├── clip-defs.json          # Animation clip definitions (rows, frames, rates)

@@ -1,5 +1,12 @@
 # OpenClaw Character Dashboard: System Design Overview
 
+> **Current status:** The diagrams in this section document the original
+> dual-protocol AWS topology. The deployed AgentCore message path now uses
+> Cognito-protected REST polling rather than browser WebSocket delivery. See
+> [AWS serverless deployment](../aws-serverless-deployment.md) and
+> [OpenClaw dashboard integration](../openclaw-dashboard-integration.md) for the
+> authoritative runtime flow.
+
 ## Technical Architecture Diagrams
 
 ### Standard System Topology
@@ -27,7 +34,10 @@ The character dashboard architecture is structured around five primary technical
     *   **WebSocket API Gateway**: Manages stateful, persistent, two-way WebSocket connections to push model reasoning text and audio streams in real-time.
 
 3.  **Unified Node.js Backend Controller**:
-    Consolidates API processing within a single, highly optimized, serverless **Backend Lambda** function built on Node.js 20.x. This function handles REST API requests, WebSocket routes (`$connect`, `$default`, `$disconnect`), and directly manages connections via AWS's WebSocket client connection manager.
+    Consolidates API processing within a single serverless **Backend Lambda**
+    function built on Node.js 24.x. This function handles Cognito-protected REST
+    API requests and the retained WebSocket routes (`$connect`, `$default`,
+    `$disconnect`).
 
 4.  **Real-Time State Store**:
     Uses an **Amazon DynamoDB Table** (`OpenClawDashboardConnections`) with single-table design to record active WebSocket socket IDs and active session states. Since Lambda is serverless, storing socket mapping in DynamoDB allows on-demand message routing to specific browsers.
