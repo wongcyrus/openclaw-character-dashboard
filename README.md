@@ -4,7 +4,7 @@ Author: An IT-a
 
 [Subscribe and Follow me! ❤️](https://profile.an-it-a.com/)
 
-![Preview](documentation/images/frieren-preview.png)
+![OpenClaw Character Dashboard](documentation/images/screen.png)
 
 ---
 
