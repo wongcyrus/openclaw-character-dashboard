@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
   AgentRuntimeEndpointSummary,
@@ -7,7 +7,21 @@ import type {
 import {
   selectAgentRuntime,
   selectAgentRuntimeEndpoint,
+  resolveAgentCoreRuntimeTarget,
 } from "./agentcoreRuntime";
+
+const { send } = vi.hoisted(() => ({ send: vi.fn() }));
+vi.mock(
+  "@aws-sdk/client-bedrock-agentcore-control",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("@aws-sdk/client-bedrock-agentcore-control")
+    >()),
+    BedrockAgentCoreControlClient: class {
+      send = send;
+    },
+  }),
+);
 
 function createRuntime(
   overrides: Partial<AgentRuntimeSummary> = {},
@@ -104,6 +118,50 @@ describe("selectAgentRuntimeEndpoint", () => {
     expect(selectedEndpoint.lastUpdatedAt?.toISOString()).toBe(
       "2026-06-03T00:00:00.000Z",
     );
+  });
+
+  describe("resolveAgentCoreRuntimeTarget", () => {
+    beforeEach(() => {
+      send.mockReset();
+    });
+
+    it("uses the endpoint name, not its ARN, as the invocation qualifier", async () => {
+      send.mockResolvedValueOnce({ agentRuntimes: [createRuntime()] });
+      send.mockResolvedValueOnce({ runtimeEndpoints: [createEndpoint()] });
+
+      const target = await resolveAgentCoreRuntimeTarget({
+        region: "us-east-1",
+        runtimeName: "openclaw_agent_dev",
+      });
+
+      expect(target.qualifier).toBe("DEFAULT");
+      expect(target.runtimeArn).toBe(createRuntime().agentRuntimeArn);
+    });
+
+    it("normalizes legacy endpoint ARN configuration to an endpoint name", async () => {
+      const target = await resolveAgentCoreRuntimeTarget({
+        region: "us-east-1",
+        runtimeArn: createRuntime().agentRuntimeArn,
+        qualifier: createEndpoint({
+          name: "BLUE",
+        }).agentRuntimeEndpointArn?.replace("/DEFAULT", "/BLUE"),
+      });
+
+      expect(target.qualifier).toBe("BLUE");
+      expect(target.endpointName).toBe("BLUE");
+      expect(send).not.toHaveBeenCalled();
+    });
+
+    it("preserves an explicit endpoint name", async () => {
+      const target = await resolveAgentCoreRuntimeTarget({
+        region: "us-east-1",
+        runtimeArn: createRuntime().agentRuntimeArn,
+        qualifier: "BLUE",
+      });
+
+      expect(target.qualifier).toBe("BLUE");
+      expect(target.endpointName).toBe("BLUE");
+    });
   });
 
   it("throws when the named endpoint is not ready", () => {

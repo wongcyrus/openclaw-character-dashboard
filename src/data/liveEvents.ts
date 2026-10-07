@@ -2,13 +2,11 @@ import { useCharacterStore } from "@/store/characterStore";
 import { useWorldStore } from "@/store/worldStore";
 import { getAppConfig } from "./appConfig";
 
-const MESSAGE_TIMEOUT_MS = 10_000;
 const DEFAULT_DASHBOARD_AGENT_ID = "main";
 
 export class LiveEventSource {
   private ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-  private messageTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private isStarted = false;
 
   constructor() {
@@ -18,7 +16,7 @@ export class LiveEventSource {
   start(): void {
     if (this.isStarted) return;
     this.isStarted = true;
-    
+
     window.addEventListener("visibilitychange", this.handleVisibilityChange);
     this.connect();
   }
@@ -37,7 +35,10 @@ export class LiveEventSource {
     };
 
     this.ws.onmessage = (event) => {
-      console.log("[LiveEventSource] Raw WebSocket message received:", event.data);
+      console.log(
+        "[LiveEventSource] Raw WebSocket message received:",
+        event.data,
+      );
       try {
         const data = JSON.parse(event.data);
         console.log("[LiveEventSource] Parsed WebSocket message:", data);
@@ -59,7 +60,10 @@ export class LiveEventSource {
         console.warn("[LiveEventSource] Disconnected, reconnecting in 5s...");
         this.reconnectTimer = setTimeout(() => this.connect(), 5000);
       } else {
-        console.log("[LiveEventSource] Connection closed", { isStarted: this.isStarted, hidden: document.hidden });
+        console.log("[LiveEventSource] Connection closed", {
+          isStarted: this.isStarted,
+          hidden: document.hidden,
+        });
       }
     };
 
@@ -86,11 +90,6 @@ export class LiveEventSource {
     window.removeEventListener("visibilitychange", this.handleVisibilityChange);
 
     this.disconnect();
-    
-    for (const timer of this.messageTimers.values()) {
-      clearTimeout(timer);
-    }
-    this.messageTimers.clear();
   }
 
   private handleVisibilityChange(): void {
@@ -101,70 +100,75 @@ export class LiveEventSource {
     }
   }
 
-  private handleEvent(data: any): void {
-    if (data.type === "agent-message" || data.type === "agent-stream") {
-      const worldConfig = useWorldStore.getState().worldConfig;
-      const normalizedAgentId =
-        typeof data.agentId === "string" && data.agentId.trim()
-          ? data.agentId
-          : worldConfig?.characters.find((c) => c.agentId === DEFAULT_DASHBOARD_AGENT_ID)
-              ?.agentId ??
-            worldConfig?.characters[0]?.agentId ??
-            DEFAULT_DASHBOARD_AGENT_ID;
-      const { content, role } = data;
-
-      const character = worldConfig?.characters.find(
-        (c) => c.agentId === normalizedAgentId,
-      );
-      if (!character) {
-        console.warn("[LiveEventSource] No character mapping for event", {
-          agentId: normalizedAgentId,
-          knownAgentIds: worldConfig?.characters.map((c) => c.agentId) ?? [],
-        });
+  private handleEvent(data: unknown): void {
+    if (!data || typeof data !== "object" || !("type" in data)) {
+      console.error("[LiveEventSource] Invalid dashboard event", data);
+      return;
+    }
+    const event = data as Record<string, unknown>;
+    if (
+      event.type !== "agent-message" &&
+      event.type !== "agent-stream" &&
+      event.type !== "agent-message-final" &&
+      event.type !== "agent-lifecycle"
+    )
+      return;
+    const worldConfig = useWorldStore.getState().worldConfig;
+    const normalizedAgentId =
+      typeof event.agentId === "string" && event.agentId.trim()
+        ? event.agentId
+        : (worldConfig?.characters.find(
+            (c) => c.agentId === DEFAULT_DASHBOARD_AGENT_ID,
+          )?.agentId ??
+          worldConfig?.characters[0]?.agentId ??
+          DEFAULT_DASHBOARD_AGENT_ID);
+    const character = worldConfig?.characters.find(
+      (c) => c.agentId === normalizedAgentId,
+    );
+    if (!character) {
+      console.warn("[LiveEventSource] No character mapping for event", {
+        agentId: normalizedAgentId,
+      });
+      return;
+    }
+    const characterId = character.id;
+    const currentMessage =
+      useCharacterStore.getState().characterMessages[characterId];
+    const runId = typeof event.runId === "string" ? event.runId : undefined;
+    if (event.type === "agent-message" || event.type === "agent-stream") {
+      const text = event.type === "agent-stream" ? event.chunk : event.content;
+      if (typeof text !== "string") {
+        console.error("[LiveEventSource] Message event is missing text", event);
         return;
       }
-
-      const characterId = character.id;
-
-      // Update store
-      const currentMessage =
-        useCharacterStore.getState().characterMessages[characterId];
+      const sameRun = currentMessage && currentMessage.runId === runId;
+      const role = typeof event.role === "string" ? event.role : "assistant";
       const newText =
-        data.type === "agent-stream"
-          ? (currentMessage?.text || "") + data.chunk
-          : content;
+        event.type === "agent-stream"
+          ? (sameRun && currentMessage.role === role
+              ? currentMessage.text
+              : "") + text
+          : text;
 
       useCharacterStore.getState().setCharacterMessage(characterId, {
         text: newText,
-        role: role || currentMessage?.role || "assistant",
+        role,
         timestamp: Date.now(),
+        runId,
+        complete: role === "user",
       });
-      console.log("[LiveEventSource] Updated character message", {
-        characterId,
-        agentId: normalizedAgentId,
-        type: data.type,
-      });
-
-      // Reset timer
-      if (this.messageTimers.has(characterId)) {
-        clearTimeout(this.messageTimers.get(characterId));
-      }
-
-      const timer = setTimeout(() => {
-        useCharacterStore.getState().setCharacterMessage(characterId, null);
-        this.messageTimers.delete(characterId);
-      }, MESSAGE_TIMEOUT_MS);
-
-      this.messageTimers.set(characterId, timer);
-    } else if (data.type === "agent-lifecycle") {
-      if (data.phase === "end" || data.phase === "error") {
-        const worldConfig = useWorldStore.getState().worldConfig;
-        const character = worldConfig?.characters.find(
-          (c) => c.agentId === data.agentId,
-        );
-        if (character) {
-          useCharacterStore.getState().setCharacterMessage(character.id, null);
-        }
+    } else if (
+      event.type === "agent-message-final" ||
+      (event.type === "agent-lifecycle" &&
+        (event.phase === "end" ||
+          event.phase === "error" ||
+          event.phase === "aborted"))
+    ) {
+      if (currentMessage && (!runId || currentMessage.runId === runId)) {
+        useCharacterStore.getState().setCharacterMessage(characterId, {
+          ...currentMessage,
+          complete: true,
+        });
       }
     }
   }

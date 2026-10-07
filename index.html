@@ -205,9 +205,10 @@
         const response = await fetch('/config.json');
         if (response.ok) {
           const config = await response.json();
-          if (config.region) cognitoConfig.region = config.region;
-          if (config.clientId) cognitoConfig.clientId = config.clientId;
-          if (config.userPoolId) cognitoConfig.userPoolId = config.userPoolId;
+          const authConfig = config.cognito || config;
+          if (authConfig.region) cognitoConfig.region = authConfig.region;
+          if (authConfig.clientId) cognitoConfig.clientId = authConfig.clientId;
+          if (authConfig.userPoolId) cognitoConfig.userPoolId = authConfig.userPoolId;
         }
       } catch (err) {
         console.warn('Could not read config.json for Cognito configuration, using default region & client IDs.', err);
@@ -220,7 +221,9 @@
         try {
           const payload = JSON.parse(atob(accessToken.split('.')[1]));
           const currentTime = Math.floor(Date.now() / 1000);
-          if (payload.exp > currentTime) {
+          const expectedIssuer = `https://cognito-idp.${cognitoConfig.region}.amazonaws.com/${cognitoConfig.userPoolId}`;
+          if (payload.exp > currentTime && payload.iss === expectedIssuer &&
+              payload.client_id === cognitoConfig.clientId) {
             return true;
           } else {
             localStorage.clear();

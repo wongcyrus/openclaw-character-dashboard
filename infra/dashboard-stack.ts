@@ -12,7 +12,9 @@ import * as apigatewayv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as nodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import { Table, AttributeType, BillingMode } from "aws-cdk-lib/aws-dynamodb";
-import { Duration, Stack, RemovalPolicy, CfnOutput } from "aws-cdk-lib";
+import { Duration, Stack, RemovalPolicy, CfnOutput, type StackProps } from "aws-cdk-lib";
+
+import type { CognitoConfig } from "./cognitoConfig";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -21,8 +23,12 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, "../.env.local") });
 dotenv.config({ path: path.join(__dirname, "../.env") });
 
+type DashboardServerlessStackProps = StackProps & {
+  cognito: CognitoConfig;
+};
+
 export class DashboardServerlessStack extends Stack {
-  constructor(scope: Construct, id: string, props?: any) {
+  constructor(scope: Construct, id: string, props: DashboardServerlessStackProps) {
     super(scope, id, props);
 
     // 1. S3 Website Bucket (Private, accessed via CloudFront)
@@ -207,6 +213,7 @@ export class DashboardServerlessStack extends Stack {
           webSocketUrl: `wss://${webSocketApi.ref}.execute-api.${this.region}.amazonaws.com/${stage.stageName}`,
           availableAssetPacks: ["frieren", "tamon"],
           defaultAssetPack: "frieren",
+          cognito: props.cognito,
         }),
       ],
       destinationBucket: websiteBucket,
@@ -236,5 +243,8 @@ export class DashboardServerlessStack extends Stack {
 
     new CfnOutput(this, "ServiceUrl", { value: `https://${distribution.distributionDomainName}` });
     new CfnOutput(this, "SharedBucket", { value: sharedFilesBucket.bucketName });
+    new CfnOutput(this, "CognitoRegion", { value: props.cognito.region });
+    new CfnOutput(this, "CognitoUserPoolId", { value: props.cognito.userPoolId });
+    new CfnOutput(this, "CognitoUserPoolClientId", { value: props.cognito.clientId });
   }
 }

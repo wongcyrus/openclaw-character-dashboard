@@ -86,11 +86,11 @@ export async function resolveAgentCoreRuntimeTarget(
       await listAllAgentRuntimeEndpoints(client, resolvedRuntimeId),
       endpointName,
     );
-    const resolvedQualifier = endpoint.agentRuntimeEndpointArn;
+    const resolvedQualifier = endpoint.name;
 
     if (!resolvedQualifier) {
       throw new Error(
-        `AgentCore runtime endpoint ${endpointName} for ${runtimeName} is missing an endpoint ARN.`,
+        `AgentCore runtime endpoint ${endpointName} for ${runtimeName} is missing an endpoint name.`,
       );
     }
 
@@ -104,12 +104,14 @@ export async function resolveAgentCoreRuntimeTarget(
   }
 
   if (runtimeArn && qualifier) {
+    const resolvedQualifier =
+      parseEndpointNameFromQualifier(qualifier) ?? qualifier;
     return {
       runtimeArn,
-      qualifier,
+      qualifier: resolvedQualifier,
       runtimeId: "",
       runtimeName: "",
-      endpointName: parseEndpointNameFromQualifier(qualifier) ?? endpointName,
+      endpointName: resolvedQualifier,
     };
   }
 

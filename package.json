@@ -20,7 +20,7 @@
     "server": "tsx server/index.ts",
     "dev:all": "concurrently \"npm run dev\" \"npm run server\"",
     "cdk": "cdk",
-    "deploy": "npm run build && cdk deploy"
+    "deploy": "tsx infra/deploy.ts"
   },
   "dependencies": {
     "@aws-sdk/client-apigatewaymanagementapi": "^3.1058.0",

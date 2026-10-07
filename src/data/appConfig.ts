@@ -5,6 +5,13 @@ const AppConfigSchema = z.object({
   webSocketUrl: z.string().optional(),
   availableAssetPacks: z.array(z.string()).optional(),
   defaultAssetPack: z.string().optional(),
+  cognito: z
+    .object({
+      region: z.string().min(1),
+      userPoolId: z.string().min(1),
+      clientId: z.string().min(1),
+    })
+    .optional(),
 });
 
 export type AppConfig = z.infer<typeof AppConfigSchema>;

@@ -251,9 +251,14 @@ async function fetchSnapshot(): Promise<any> {
           id: "connect",
           method: "connect",
           params: {
-            minProtocol: 3,
-            maxProtocol: 3,
-            client: { id: "serverless-dashboard", version: "1.0.0" },
+            minProtocol: 4,
+            maxProtocol: 4,
+            client: {
+              id: "gateway-client",
+              version: "openclaw-character-dashboard-lambda",
+              platform: "node",
+              mode: "backend",
+            },
             role: "operator",
           },
         }),

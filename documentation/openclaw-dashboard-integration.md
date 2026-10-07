@@ -342,6 +342,27 @@ Before rebroadcasting to browser clients, the local relay also normalizes each a
 
 So the local relay is combining extra status context into the WS payload, but the dashboard movement/status loop still follows snapshot polling.
 
+### Scrolling speech bubbles
+
+Speech bubbles have a fixed 400-pixel width and 144-pixel text viewport with
+14-pixel text (about eight lines). Overflow is clipped rather than expanding over
+the map. The first lines remain visible for two seconds, then text scrolls upward at 18 pixels per
+second until the final lines are visible.
+
+`agent-message-final` and lifecycle `end`, `error`, or `aborted` events mark a
+message complete instead of immediately removing it. Once the entire message
+has scrolled and the run is complete, the final lines remain visible for three
+seconds before dismissal. Short messages stay visible for at least six seconds.
+Streaming messages remain visible until completion; additional text extends the
+scroll and resets the final hold without restarting from the beginning.
+
+Messages are tracked by run ID so a new conversation starts at the first line
+and a late completion from an older run cannot close the new bubble. User
+messages are complete immediately and are not concatenated with assistant text.
+Timing is driven by the Phaser update loop, so browser pauses do not consume the
+reading period. `src/game/utils/speechPlayback.ts` owns the timing logic, while
+`CharacterSprite` owns clipping and positioning.
+
 This fallback is the core AgentCore workaround:
 
 1. the browser keeps a normal local WebSocket connection to `/api/ws`
