@@ -343,7 +343,7 @@ app.get("/api/file", async (req: Request, res: Response): Promise<void> => {
 // ---------------------------------------------------------------------------
 
 if (existsSync(DIST_PATH)) {
-  app.get("*", (req: Request, res: Response, next: NextFunction) => {
+  app.get("{*splat}", (req: Request, res: Response, next: NextFunction) => {
     if (req.path.startsWith("/api")) {
       return next();
     }

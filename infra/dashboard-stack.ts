@@ -5,6 +5,7 @@ import { Construct } from "constructs";
 import * as s3 from "aws-cdk-lib/aws-s3";
 import * as s3deploy from "aws-cdk-lib/aws-s3-deployment";
 import * as iam from "aws-cdk-lib/aws-iam";
+import * as cognito from "aws-cdk-lib/aws-cognito";
 import * as cloudfront from "aws-cdk-lib/aws-cloudfront";
 import * as origins from "aws-cdk-lib/aws-cloudfront-origins";
 import * as apigateway from "aws-cdk-lib/aws-apigateway";
@@ -12,7 +13,13 @@ import * as apigatewayv2 from "aws-cdk-lib/aws-apigatewayv2";
 import * as lambda from "aws-cdk-lib/aws-lambda";
 import * as nodejs from "aws-cdk-lib/aws-lambda-nodejs";
 import { Table, AttributeType, BillingMode } from "aws-cdk-lib/aws-dynamodb";
-import { Duration, Stack, RemovalPolicy, CfnOutput, type StackProps } from "aws-cdk-lib";
+import {
+  Duration,
+  Stack,
+  RemovalPolicy,
+  CfnOutput,
+  type StackProps,
+} from "aws-cdk-lib";
 
 import type { CognitoConfig } from "./cognitoConfig";
 
@@ -28,7 +35,11 @@ type DashboardServerlessStackProps = StackProps & {
 };
 
 export class DashboardServerlessStack extends Stack {
-  constructor(scope: Construct, id: string, props: DashboardServerlessStackProps) {
+  constructor(
+    scope: Construct,
+    id: string,
+    props: DashboardServerlessStackProps,
+  ) {
     super(scope, id, props);
 
     // 1. S3 Website Bucket (Private, accessed via CloudFront)
@@ -50,19 +61,21 @@ export class DashboardServerlessStack extends Stack {
     const sharedFilesBucket = new s3.Bucket(this, "SharedFilesBucket", {
       removalPolicy: RemovalPolicy.DESTROY,
       autoDeleteObjects: true,
-      cors: [{
-        allowedHeaders: ["*"],
-        allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD],
-        allowedOrigins: ["*"],
-        maxAge: 3000,
-      }],
+      cors: [
+        {
+          allowedHeaders: ["*"],
+          allowedMethods: [s3.HttpMethods.GET, s3.HttpMethods.HEAD],
+          allowedOrigins: ["*"],
+          maxAge: 3000,
+        },
+      ],
     });
 
     // 4. Lambda Backend
     const lambdaFunction = new nodejs.NodejsFunction(this, "BackendLambda", {
       entry: path.join(__dirname, "../server/lambda.ts"),
       handler: "handler",
-      runtime: lambda.Runtime.NODEJS_20_X,
+      runtime: lambda.Runtime.NODEJS_24_X,
       timeout: Duration.seconds(30),
       memorySize: 512,
       environment: {
@@ -75,7 +88,8 @@ export class DashboardServerlessStack extends Stack {
         AGENTCORE_RUNTIME_ENDPOINT_NAME:
           process.env.AGENTCORE_RUNTIME_ENDPOINT_NAME || "",
         AGENTCORE_RUNTIME_ARN: process.env.AGENTCORE_RUNTIME_ARN || "",
-        AGENTCORE_RUNTIME_ENDPOINT_ID: process.env.AGENTCORE_RUNTIME_ENDPOINT_ID || "",
+        AGENTCORE_RUNTIME_ENDPOINT_ID:
+          process.env.AGENTCORE_RUNTIME_ENDPOINT_ID || "",
         AGENTCORE_ACTOR_ID: process.env.AGENTCORE_ACTOR_ID || "",
         AGENTCORE_CHANNEL: process.env.AGENTCORE_CHANNEL || "",
         AGENTCORE_IDENTITY_TABLE_NAME:
@@ -95,15 +109,29 @@ export class DashboardServerlessStack extends Stack {
       defaultCorsPreflightOptions: {
         allowOrigins: apigateway.Cors.ALL_ORIGINS,
         allowMethods: apigateway.Cors.ALL_METHODS,
+        allowHeaders: apigateway.Cors.DEFAULT_HEADERS,
       },
     });
 
+    const userPool = cognito.UserPool.fromUserPoolId(
+      this,
+      "DashboardUserPool",
+      props.cognito.userPoolId,
+    );
+    const authorizer = new apigateway.CognitoUserPoolsAuthorizer(
+      this,
+      "RestApiAuthorizer",
+      {
+        cognitoUserPools: [userPool],
+      },
+    );
     const lambdaIntegration = new apigateway.LambdaIntegration(lambdaFunction);
     const apiResource = restApi.root.addResource("api");
     apiResource.addProxy({
       defaultIntegration: lambdaIntegration,
       defaultMethodOptions: {
-        authorizationType: apigateway.AuthorizationType.NONE,
+        authorizationType: apigateway.AuthorizationType.COGNITO,
+        authorizer,
       },
     });
 
@@ -114,11 +142,15 @@ export class DashboardServerlessStack extends Stack {
       routeSelectionExpression: "$request.body.action",
     });
 
-    const wsIntegration = new apigatewayv2.CfnIntegration(this, "WsIntegration", {
-      apiId: webSocketApi.ref,
-      integrationType: "AWS_PROXY",
-      integrationUri: `arn:aws:apigateway:${this.region}:lambda:path/2015-03-31/functions/${lambdaFunction.functionArn}/invocations`,
-    });
+    const wsIntegration = new apigatewayv2.CfnIntegration(
+      this,
+      "WsIntegration",
+      {
+        apiId: webSocketApi.ref,
+        integrationType: "AWS_PROXY",
+        integrationUri: `arn:aws:apigateway:${this.region}:lambda:path/2015-03-31/functions/${lambdaFunction.functionArn}/invocations`,
+      },
+    );
 
     const connectRoute = new apigatewayv2.CfnRoute(this, "ConnectRoute", {
       apiId: webSocketApi.ref,
@@ -159,25 +191,45 @@ export class DashboardServerlessStack extends Stack {
       sourceArn: `arn:aws:execute-api:${this.region}:${this.account}:${webSocketApi.ref}/*`,
     });
 
-    lambdaFunction.addToRolePolicy(new iam.PolicyStatement({
-      actions: ["execute-api:ManageConnections"],
-      resources: [`arn:aws:execute-api:${this.region}:${this.account}:${webSocketApi.ref}/${stage.stageName}/*`],
-    }));
+    lambdaFunction.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ["execute-api:ManageConnections"],
+        resources: [
+          `arn:aws:execute-api:${this.region}:${this.account}:${webSocketApi.ref}/${stage.stageName}/*`,
+        ],
+      }),
+    );
 
-    lambdaFunction.addEnvironment("WEBSOCKET_ENDPOINT", `https://${webSocketApi.ref}.execute-api.${this.region}.amazonaws.com/${stage.stageName}`);
+    lambdaFunction.addEnvironment(
+      "WEBSOCKET_ENDPOINT",
+      `https://${webSocketApi.ref}.execute-api.${this.region}.amazonaws.com/${stage.stageName}`,
+    );
 
     // Grant permissions to invoke Bedrock AgentCore if in agentcore mode
     if (process.env.OPENCLAW_BACKEND_MODE === "agentcore") {
-      lambdaFunction.addToRolePolicy(new iam.PolicyStatement({
-        actions: [
-          "bedrock-agentcore:InvokeAgentRuntime",
-          "bedrock-agentcore:InvokeAgentRuntimeWithWebSocketStream",
-          "bedrock-agentcore:ListAgentRuntimes",
-          "bedrock-agentcore:ListAgentRuntimeEndpoints",
-          "dynamodb:GetItem",
-        ],
-        resources: ["*"], 
-      }));
+      lambdaFunction.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: [
+            "bedrock-agentcore:InvokeAgentRuntime",
+            "bedrock-agentcore:InvokeAgentRuntimeWithWebSocketStream",
+            "bedrock-agentcore:ListAgentRuntimes",
+            "bedrock-agentcore:ListAgentRuntimeEndpoints",
+            "dynamodb:GetItem",
+          ],
+          resources: ["*"],
+        }),
+      );
+      lambdaFunction.addToRolePolicy(
+        new iam.PolicyStatement({
+          actions: ["kms:Decrypt"],
+          resources: ["*"],
+          conditions: {
+            StringEquals: {
+              "kms:ViaService": `dynamodb.${this.region}.amazonaws.com`,
+            },
+          },
+        }),
+      );
     }
 
     // 7. CloudFront Distribution
@@ -194,7 +246,8 @@ export class DashboardServerlessStack extends Stack {
       viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.HTTPS_ONLY,
       allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
       cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
-      originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+      originRequestPolicy:
+        cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
     });
 
     // 8. Deployment: Shared Files (Resource Wall)
@@ -211,6 +264,7 @@ export class DashboardServerlessStack extends Stack {
         s3deploy.Source.jsonData("config.json", {
           apiBaseUrl: `https://${distribution.distributionDomainName}/api`,
           webSocketUrl: `wss://${webSocketApi.ref}.execute-api.${this.region}.amazonaws.com/${stage.stageName}`,
+          eventPollUrl: `https://${distribution.distributionDomainName}/api/openclaw/events`,
           availableAssetPacks: ["frieren", "tamon"],
           defaultAssetPack: "frieren",
           cognito: props.cognito,
@@ -224,7 +278,9 @@ export class DashboardServerlessStack extends Stack {
 
     // 10. Deployment: Asset Packs (to specific prefixes)
     new s3deploy.BucketDeployment(this, "DeployAssetPackFrieren", {
-      sources: [s3deploy.Source.asset(path.join(__dirname, "../public_frieren"))],
+      sources: [
+        s3deploy.Source.asset(path.join(__dirname, "../public_frieren")),
+      ],
       destinationBucket: websiteBucket,
       destinationKeyPrefix: "assets/frieren",
       distribution,
@@ -233,7 +289,9 @@ export class DashboardServerlessStack extends Stack {
     });
 
     new s3deploy.BucketDeployment(this, "DeployAssetPackTamon", {
-      sources: [s3deploy.Source.asset(path.join(__dirname, "../public_tamon_b_side"))],
+      sources: [
+        s3deploy.Source.asset(path.join(__dirname, "../public_tamon_b_side")),
+      ],
       destinationBucket: websiteBucket,
       destinationKeyPrefix: "assets/tamon",
       distribution,
@@ -241,10 +299,18 @@ export class DashboardServerlessStack extends Stack {
       prune: false,
     });
 
-    new CfnOutput(this, "ServiceUrl", { value: `https://${distribution.distributionDomainName}` });
-    new CfnOutput(this, "SharedBucket", { value: sharedFilesBucket.bucketName });
+    new CfnOutput(this, "ServiceUrl", {
+      value: `https://${distribution.distributionDomainName}`,
+    });
+    new CfnOutput(this, "SharedBucket", {
+      value: sharedFilesBucket.bucketName,
+    });
     new CfnOutput(this, "CognitoRegion", { value: props.cognito.region });
-    new CfnOutput(this, "CognitoUserPoolId", { value: props.cognito.userPoolId });
-    new CfnOutput(this, "CognitoUserPoolClientId", { value: props.cognito.clientId });
+    new CfnOutput(this, "CognitoUserPoolId", {
+      value: props.cognito.userPoolId,
+    });
+    new CfnOutput(this, "CognitoUserPoolClientId", {
+      value: props.cognito.clientId,
+    });
   }
 }

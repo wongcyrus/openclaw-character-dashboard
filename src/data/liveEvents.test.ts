@@ -6,8 +6,15 @@ import type { WorldConfig } from "@/types/world";
 
 import { LiveEventSource } from "./liveEvents";
 
+const appConfig = vi.hoisted(() => ({
+  value: { webSocketUrl: "wss://dashboard.test/ws" } as {
+    webSocketUrl?: string;
+    eventPollUrl?: string;
+  },
+}));
+
 vi.mock("./appConfig", () => ({
-  getAppConfig: () => ({ webSocketUrl: "wss://dashboard.test/ws" }),
+  getAppConfig: () => appConfig.value,
 }));
 
 class TestWebSocket {
@@ -51,8 +58,11 @@ describe("LiveEventSource speech lifecycle", () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    appConfig.value = { webSocketUrl: "wss://dashboard.test/ws" };
     vi.stubGlobal("WebSocket", TestWebSocket);
     vi.spyOn(console, "log").mockImplementation(() => {});
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.spyOn(console, "error").mockImplementation(() => {});
     useWorldStore.setState({ worldConfig: world });
     useCharacterStore.setState({ characterMessages: {} });
     source = new LiveEventSource();
@@ -137,6 +147,87 @@ describe("LiveEventSource speech lifecycle", () => {
     emit({ type: "agent-message-final", agentId: undefined });
     expect(useCharacterStore.getState().characterMessages.alice.complete).toBe(
       true,
+    );
+  });
+
+  it("polls AgentCore events, advances the sequence, and handles messages", async () => {
+    source.stop();
+    appConfig.value = {
+      eventPollUrl: "https://dashboard.test/api/openclaw/events",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          events: [
+            {
+              type: "agent-message",
+              agentId: "main",
+              runId: "run-poll",
+              role: "assistant",
+              content: "Polled answer",
+            },
+          ],
+          nextSeq: 7,
+          streamStatus: { connected: true },
+        }),
+      })
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          events: [],
+          nextSeq: 7,
+          streamStatus: { connected: true },
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    source = new LiveEventSource();
+    source.start();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(useCharacterStore.getState().characterMessages.alice).toMatchObject({
+      text: "Polled answer",
+      runId: "run-poll",
+    });
+
+    await vi.advanceTimersByTimeAsync(2_000);
+    expect(fetchMock).toHaveBeenLastCalledWith(
+      "https://dashboard.test/api/openclaw/events?since=7",
+      expect.objectContaining({ cache: "no-store" }),
+    );
+  });
+
+  it("logs poll failures and warns after thirty seconds without messages", async () => {
+    source.stop();
+    appConfig.value = {
+      eventPollUrl: "https://dashboard.test/api/openclaw/events",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          events: [],
+          nextSeq: 0,
+          streamStatus: { connected: false },
+        }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    source = new LiveEventSource();
+    source.start();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(console.error).toHaveBeenCalledWith(
+      "[LiveEventSource] Event poll failed",
+      expect.objectContaining({ message: "network down" }),
+    );
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(console.warn).toHaveBeenCalledWith(
+      "[LiveEventSource] No messages received",
+      expect.objectContaining({ since: 0 }),
     );
   });
 });

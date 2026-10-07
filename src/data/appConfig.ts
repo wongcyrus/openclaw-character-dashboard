@@ -3,6 +3,7 @@ import { z } from "zod";
 const AppConfigSchema = z.object({
   apiBaseUrl: z.string().optional(),
   webSocketUrl: z.string().optional(),
+  eventPollUrl: z.string().optional(),
   availableAssetPacks: z.array(z.string()).optional(),
   defaultAssetPack: z.string().optional(),
   cognito: z

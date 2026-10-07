@@ -21,11 +21,13 @@ if (!script) throw new Error("Login module script not found in index.html");
 describe("login configuration", () => {
   const storage = new Map<string, string>();
   const fetch = vi.fn();
+  const addEventListener = vi.fn();
   let auth: AuthScript;
 
   beforeEach(() => {
     storage.clear();
     fetch.mockReset();
+    addEventListener.mockReset();
     fetch.mockResolvedValue({
       ok: true,
       json: async () => ({ cognito: config }),
@@ -36,7 +38,7 @@ describe("login configuration", () => {
         fetch,
         console,
         atob,
-        window: { addEventListener: vi.fn() },
+        window: { addEventListener },
         localStorage: {
           getItem: (key: string) => storage.get(key),
           clear: () => storage.clear(),
@@ -98,4 +100,19 @@ describe("login configuration", () => {
       expect(storage.has("accessToken")).toBe(false);
     },
   );
+
+  it("keeps login controls inside the card", () => {
+    expect(html).toMatch(
+      /\.login-wrapper,\s*\.login-wrapper \* \{\s*box-sizing: border-box;/,
+    );
+    expect(html).toContain("max-width: 100%;");
+    expect(html).toContain("min-width: 0;");
+  });
+
+  it("logs out when an authenticated API request is rejected", () => {
+    expect(addEventListener).toHaveBeenCalledWith(
+      "openclaw:unauthorized",
+      expect.any(Function),
+    );
+  });
 });

@@ -11,6 +11,7 @@ describe("loadAppConfig", () => {
   it("preserves shared Cognito identifiers from deployed runtime config", async () => {
     const config = {
       apiBaseUrl: "/api",
+      eventPollUrl: "/api/openclaw/events",
       cognito: {
         region: "us-east-1",
         userPoolId: "us-east-1_shared",

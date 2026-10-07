@@ -52,7 +52,12 @@ let agentCoreTargetPromise: Promise<ResolvedAgentCoreRuntimeTarget> | null =
 export const handler = async (
   event: any,
 ): Promise<APIGatewayProxyResult | any> => {
-  console.log("Event:", JSON.stringify(event));
+  console.log("[dashboard-lambda] request", {
+    routeKey: event.requestContext?.routeKey,
+    path: event.path,
+    method: event.httpMethod,
+    connectionId: event.requestContext?.connectionId,
+  });
 
   // 1. WebSocket Handling
   if (event.requestContext && event.requestContext.connectionId) {
@@ -74,6 +79,7 @@ async function handleWebSocket(event: any): Promise<any> {
           Item: { connectionId, timestamp: Date.now() },
         }),
       );
+      console.log("[dashboard-ws] connected", { connectionId });
       return { statusCode: 200, body: "Connected" };
 
     case "$disconnect":
@@ -83,6 +89,7 @@ async function handleWebSocket(event: any): Promise<any> {
           Key: { connectionId },
         }),
       );
+      console.log("[dashboard-ws] disconnected", { connectionId });
       return { statusCode: 200, body: "Disconnected" };
 
     default:
@@ -113,6 +120,39 @@ async function handleHttp(
         statusCode: 500,
         headers,
         body: JSON.stringify({ error: err.message }),
+      };
+    }
+  }
+
+  if (path === "/api/openclaw/events") {
+    const rawSince = event.queryStringParameters?.since ?? "0";
+    const parsedSince = Number(rawSince);
+    const since =
+      Number.isSafeInteger(parsedSince) && parsedSince >= 0 ? parsedSince : 0;
+
+    try {
+      const payload = await fetchAgentCoreEvents(since);
+      const events = payload.events ?? [];
+      if (events.length > 0) {
+        console.log("[dashboard-events] received", {
+          since,
+          count: events.length,
+          nextSeq: payload.nextSeq,
+          eventTypes: events.map((item) => item["type"]).filter(Boolean),
+        });
+      }
+      return {
+        statusCode: 200,
+        headers: { ...headers, "Cache-Control": "no-store" },
+        body: JSON.stringify(payload),
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error("[dashboard-events] poll failed", { since, message });
+      return {
+        statusCode: 500,
+        headers,
+        body: JSON.stringify({ error: message }),
       };
     }
   }
@@ -307,6 +347,11 @@ async function broadcast(message: any) {
   });
 
   const payload = JSON.stringify(message);
+  console.log("[dashboard-ws] broadcasting", {
+    connectionCount: connections.Items?.length ?? 0,
+    type: message?.type,
+    runId: message?.runId,
+  });
   const promises = (connections.Items || []).map(async (conn) => {
     try {
       await apigwClient.send(
@@ -323,6 +368,14 @@ async function broadcast(message: any) {
             Key: { connectionId: conn.connectionId },
           }),
         );
+        console.log("[dashboard-ws] removed stale connection", {
+          connectionId: conn.connectionId,
+        });
+      } else {
+        console.error("[dashboard-ws] delivery failed", {
+          connectionId: conn.connectionId,
+          message: err instanceof Error ? err.message : String(err),
+        });
       }
     }
   });
@@ -353,6 +406,43 @@ async function fetchAgentCoreSnapshot(): Promise<any> {
   }
 
   return payload.snapshot;
+}
+
+async function fetchAgentCoreEvents(since: number): Promise<{
+  events?: Record<string, unknown>[];
+  nextSeq?: number;
+  streamStatus?: Record<string, unknown>;
+}> {
+  const identity = await resolveAgentCoreIdentity();
+  const runtimeTarget = await getAgentCoreRuntimeTarget();
+  const payload = (await invokeAgentCoreAction(
+    runtimeTarget,
+    identity.runtimeSessionId,
+    {
+      action: "dashboard_events",
+      userId: identity.userId,
+      actorId: AGENTCORE_ACTOR_ID,
+      channel: AGENTCORE_CHANNEL,
+      sessionId: identity.runtimeSessionId,
+      since,
+      limit: 100,
+    },
+  )) as {
+    status?: string;
+    error?: string;
+    events?: Record<string, unknown>[];
+    nextSeq?: number;
+    streamStatus?: Record<string, unknown>;
+  };
+
+  if (payload.status !== "ready") {
+    throw new Error(
+      payload.error ??
+        `AgentCore dashboard events failed with status ${payload.status ?? "unknown"}`,
+    );
+  }
+
+  return payload;
 }
 
 async function invokeAgentCoreAction(
@@ -409,38 +499,65 @@ async function resolveAgentCoreIdentity(): Promise<{
     };
   }
 
-  // Fallback to DynamoDB resolution logic (simplified for Lambda)
   const identityTableName = inferAgentCoreIdentityTableName({
     qualifier: (await getAgentCoreRuntimeTarget()).qualifier,
     explicitTableName: process.env.AGENTCORE_IDENTITY_TABLE_NAME,
     explicitSuffix:
       process.env.AGENTCORE_ENV_SUFFIX || process.env.OPENCLAW_ENV_SUFFIX,
   });
-  const userId =
+  const fallbackUserId =
     process.env.AGENTCORE_USER_ID ||
     `dashboard-user-${createHash("sha1").update(AGENTCORE_ACTOR_ID).digest("hex").slice(0, 12)}`;
+  const fallbackRuntimeSessionId =
+    process.env.AGENTCORE_RUNTIME_SESSION_ID ||
+    `dashboard_session_${createHash("sha1").update(AGENTCORE_ACTOR_ID).digest("hex").slice(0, 24)}`;
 
-  // Attempt to resolve from DDB if not explicit
-  try {
-    const sessionRecord = await docClient.send(
+  let userId = process.env.AGENTCORE_USER_ID || "";
+  if (!userId) {
+    const channelProfile = await docClient.send(
       new GetCommand({
         TableName: identityTableName,
         Key: {
-          PK: `USER#${userId}`,
-          SK: "SESSION",
+          PK: `CHANNEL#${AGENTCORE_ACTOR_ID}`,
+          SK: "PROFILE",
         },
       }),
     );
-
-    const runtimeSessionId =
-      sessionRecord.Item?.sessionId ||
-      `dashboard_session_${createHash("sha1").update(AGENTCORE_ACTOR_ID).digest("hex").slice(0, 24)}`;
-    return { userId, runtimeSessionId };
-  } catch (err) {
-    console.warn("Failed to resolve identity from DDB, using defaults:", err);
-    return {
-      userId,
-      runtimeSessionId: `dashboard_session_${createHash("sha1").update(AGENTCORE_ACTOR_ID).digest("hex").slice(0, 24)}`,
-    };
+    userId =
+      typeof channelProfile.Item?.["userId"] === "string"
+        ? channelProfile.Item["userId"]
+        : "";
+    if (!userId) {
+      throw new Error(
+        `Could not resolve AgentCore user identity from ${identityTableName}.`,
+      );
+    }
   }
+
+  const sessionRecord = await docClient.send(
+    new GetCommand({
+      TableName: identityTableName,
+      Key: {
+        PK: `USER#${userId || fallbackUserId}`,
+        SK: "SESSION",
+      },
+    }),
+  );
+  const runtimeSessionId =
+    typeof sessionRecord.Item?.["sessionId"] === "string"
+      ? sessionRecord.Item["sessionId"]
+      : fallbackRuntimeSessionId;
+
+  console.log("[agentcore-identity] resolved", {
+    tableName: identityTableName,
+    userSource: process.env.AGENTCORE_USER_ID
+      ? "environment"
+      : "channel-profile",
+    sessionSource:
+      typeof sessionRecord.Item?.["sessionId"] === "string"
+        ? "identity-table"
+        : "fallback",
+  });
+
+  return { userId: userId || fallbackUserId, runtimeSessionId };
 }

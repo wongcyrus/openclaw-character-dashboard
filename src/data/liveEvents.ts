@@ -1,12 +1,20 @@
 import { useCharacterStore } from "@/store/characterStore";
 import { useWorldStore } from "@/store/worldStore";
 import { getAppConfig } from "./appConfig";
+import { authenticatedFetch } from "./authenticatedFetch";
 
 const DEFAULT_DASHBOARD_AGENT_ID = "main";
+const INITIAL_EVENT_POLL_DELAY_MS = 5_000;
+const EVENT_POLL_INTERVAL_MS = 2_000;
+const NO_EVENT_WARNING_MS = 30_000;
 
 export class LiveEventSource {
   private ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private pollTimer: ReturnType<typeof setTimeout> | null = null;
+  private nextSeq = 0;
+  private lastEventAt = 0;
+  private lastNoEventWarningAt = 0;
   private isStarted = false;
 
   constructor() {
@@ -16,9 +24,23 @@ export class LiveEventSource {
   start(): void {
     if (this.isStarted) return;
     this.isStarted = true;
+    this.lastEventAt = Date.now();
 
     window.addEventListener("visibilitychange", this.handleVisibilityChange);
-    this.connect();
+    const config = getAppConfig();
+    if (config.eventPollUrl) {
+      console.log("[LiveEventSource] Using AgentCore event polling", {
+        eventPollUrl: config.eventPollUrl,
+        initialDelayMs: INITIAL_EVENT_POLL_DELAY_MS,
+        intervalMs: EVENT_POLL_INTERVAL_MS,
+      });
+      this.pollTimer = setTimeout(
+        () => void this.pollEvents(),
+        INITIAL_EVENT_POLL_DELAY_MS,
+      );
+    } else {
+      this.connect();
+    }
   }
 
   private connect(): void {
@@ -90,13 +112,96 @@ export class LiveEventSource {
     window.removeEventListener("visibilitychange", this.handleVisibilityChange);
 
     this.disconnect();
+    if (this.pollTimer) {
+      clearTimeout(this.pollTimer);
+      this.pollTimer = null;
+    }
   }
 
   private handleVisibilityChange(): void {
     if (document.hidden) {
       this.disconnect();
+      if (this.pollTimer) {
+        clearTimeout(this.pollTimer);
+        this.pollTimer = null;
+      }
     } else if (this.isStarted) {
-      this.connect();
+      const config = getAppConfig();
+      if (config.eventPollUrl) {
+        void this.pollEvents();
+      } else {
+        this.connect();
+      }
+    }
+  }
+
+  private async pollEvents(): Promise<void> {
+    if (!this.isStarted || document.hidden) return;
+
+    const eventPollUrl = getAppConfig().eventPollUrl;
+    if (!eventPollUrl) return;
+
+    try {
+      const response = await authenticatedFetch(
+        `${eventPollUrl}?since=${encodeURIComponent(String(this.nextSeq))}`,
+        {
+          headers: { Accept: "application/json" },
+          cache: "no-store",
+        },
+      );
+      const payload = (await response.json()) as {
+        error?: string;
+        events?: unknown[];
+        nextSeq?: number;
+        streamStatus?: Record<string, unknown>;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error ?? `HTTP ${response.status}`);
+      }
+
+      const events = payload.events ?? [];
+      if (events.length > 0) {
+        console.log("[LiveEventSource] Event poll received", {
+          count: events.length,
+          since: this.nextSeq,
+          nextSeq: payload.nextSeq,
+          streamStatus: payload.streamStatus,
+        });
+        this.lastEventAt = Date.now();
+        for (const event of events) {
+          this.handleEvent(event);
+        }
+      } else if (
+        Date.now() - this.lastEventAt >= NO_EVENT_WARNING_MS &&
+        Date.now() - this.lastNoEventWarningAt >= NO_EVENT_WARNING_MS
+      ) {
+        this.lastNoEventWarningAt = Date.now();
+        console.warn("[LiveEventSource] No messages received", {
+          since: this.nextSeq,
+          idleMs: Date.now() - this.lastEventAt,
+          streamStatus: payload.streamStatus,
+        });
+      }
+
+      if (
+        typeof payload.nextSeq === "number" &&
+        Number.isSafeInteger(payload.nextSeq) &&
+        payload.nextSeq >= this.nextSeq
+      ) {
+        this.nextSeq = payload.nextSeq;
+      }
+    } catch (error) {
+      console.error("[LiveEventSource] Event poll failed", {
+        since: this.nextSeq,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      if (this.isStarted && !document.hidden) {
+        this.pollTimer = setTimeout(
+          () => void this.pollEvents(),
+          EVENT_POLL_INTERVAL_MS,
+        );
+      }
     }
   }
 

@@ -5,8 +5,9 @@ This document describes how to deploy the OpenClaw Character Dashboard as a full
 ## Architecture Overview
 
 - **Frontend**: React + Phaser SPA hosted on **Amazon S3** and served via **Amazon CloudFront**.
-- **REST API**: **Amazon API Gateway** (REST) backed by **AWS Lambda** (Node.js).
-- **Real-time Events**: **Amazon API Gateway** (WebSocket) using **Amazon DynamoDB** for connection management.
+- **REST API**: Cognito-protected **Amazon API Gateway** (REST) backed by **AWS Lambda** (Node.js).
+- **Near-live Events**: The browser polls the protected AgentCore event endpoint every two seconds.
+- **Legacy WebSocket**: An API Gateway WebSocket and DynamoDB connection table remain deployed, but the current AgentCore browser path does not use them.
 - **Storage**: **Amazon S3** for shared resource wall files and character asset packs.
 
 ## Infrastructure (CDK)
@@ -18,6 +19,7 @@ The project uses **AWS CDK** for infrastructure as code. The stack is defined in
 - `SharedFilesBucket`: S3 bucket for the resource wall.
 - `ConnectionsTable`: DynamoDB table for WebSocket connection IDs.
 - `BackendLambda`: Monolithic Node.js function handling REST and WebSocket routes.
+- `RestApiAuthorizer`: Cognito user-pool authorizer protecting every `/api/*` REST route.
 - `Distribution`: CloudFront CDN for global distribution.
 - **Shared Cognito**: Uses the existing user pool and client from the
   `aws-agentic-robotics` stack. This dashboard does not create or delete Cognito pools.
@@ -93,7 +95,8 @@ npm run deploy
    standalone `npm run cdk synth` / `diff`). `config.json` contains the resulting
    API/WS endpoints and `cognito: { region, userPoolId, clientId }`. These identifiers
    configure the existing login screen. Sessions from a different pool or app
-   client are discarded. This frontend login does not enforce API authentication.
+   client are discarded. The same user pool is attached to API Gateway as a
+   `COGNITO_USER_POOLS` authorizer.
 3. **Deployment**:
    - `dist/` is uploaded to S3.
    - `public_frieren/` and `public_tamon_b_side/` are uploaded to `assets/` prefixes in S3.
@@ -101,6 +104,98 @@ npm run deploy
    - Lambda is bundled and deployed.
 4. **Invalidation**: CloudFront cache is cleared automatically.
 
+## Login and API Authorization Flow
+
+The login overlay in `index.html` is the authentication bootstrap. It loads
+before React so the dashboard application and its polling loops do not start
+until a valid Cognito session exists.
+
+```text
+┌──────────────────────┐
+│ Browser opens site   │
+└──────────┬───────────┘
+           │ public GET / and /config.json
+           ▼
+┌────────────────────────────────────┐
+│ CloudFront + private website S3    │
+│ config.json supplies pool/client   │
+└──────────┬─────────────────────────┘
+           │
+           │ no valid access token
+           ▼
+┌────────────────────────────────────┐
+│ Login overlay                      │
+│ username + password                │
+└──────────┬─────────────────────────┘
+           │ Cognito InitiateAuth
+           │ USER_PASSWORD_AUTH
+           ▼
+┌────────────────────────────────────┐
+│ Existing Cognito user pool         │
+│ returns access, ID, refresh tokens │
+└──────────┬─────────────────────────┘
+           │ store tokens in localStorage
+           │ start React + Phaser dashboard
+           ▼
+┌────────────────────────────────────┐
+│ authenticatedFetch                 │
+│ Authorization: Bearer <ID token>   │
+└──────────┬─────────────────────────┘
+           │ /api/openclaw/*
+           │ /api/files and /api/file
+           ▼
+┌────────────────────────────────────┐
+│ API Gateway Cognito authorizer     │
+│ verifies signature, pool, expiry   │
+└──────────┬───────────────┬─────────┘
+           │ valid         │ missing/expired/invalid
+           ▼               ▼
+┌────────────────────┐   ┌──────────────────────┐
+│ Backend Lambda     │   │ 401 Unauthorized     │
+│ AgentCore / S3     │   └──────────┬───────────┘
+└────────────────────┘              │ openclaw:unauthorized
+                                    ▼
+                         ┌────────────────────────┐
+                         │ Clear tokens + reload  │
+                         │ polling stops; login   │
+                         └────────────────────────┘
+```
+
+### Browser session behavior
+
+1. `loadCognitoConfig()` reads the public runtime `config.json`.
+2. `checkExistingAuth()` validates the locally stored access token's expiry,
+   issuer, and app-client ID before React is imported.
+3. A successful username/password login stores the Cognito access, ID, and
+   refresh tokens, then starts the dashboard.
+4. `authenticatedFetch()` sends the ID token with every protected REST request.
+5. The login shell checks the access token every 30 seconds. Expiration clears
+   the browser session and reloads the login screen.
+6. API Gateway independently validates every API request. A rejected token
+   returns `401`; the frontend performs the same logout immediately instead of
+   waiting for the next 30-second check.
+
+The refresh token is currently stored but is not used to renew the session.
+Users sign in again after token expiration.
+
 ## Accessing the App
 
-After a successful deployment, the `ServiceUrl` will be printed in the terminal (e.g., `https://d12345.cloudfront.net`).
+After a successful deployment, the `ServiceUrl` will be printed in the terminal
+(e.g., `https://d12345.cloudfront.net`). The login page and `config.json` remain
+public so Cognito sign-in can start. Every `/api/*` request requires the Cognito
+ID token in the `Authorization` header.
+
+The frontend adds this header through `src/data/authenticatedFetch.ts` for:
+
+- snapshots and AgentCore event polling
+- resource-wall directory listings
+- text and binary file previews
+- authenticated file downloads
+
+An API Gateway `401` dispatches the `openclaw:unauthorized` browser event. The
+login shell clears the stored session, reloads the page, and stops all polling.
+
+The current login implementation stores Cognito tokens in browser
+`localStorage`. This is acceptable for the development deployment but should be
+replaced with a hardened authorization-code-with-PKCE flow and safer token
+storage before production use.

@@ -32,10 +32,12 @@ openclaw-character-dashboard/
 │   ├── styles/global.css      # Global CSS reset and variables
 │   ├── types/world.ts         # Shared TypeScript types
 │   ├── data/
+│   │   ├── authenticatedFetch.ts # Cognito token headers + 401 session handling
 │   │   ├── worldConfig.ts     # Zod validation + loadWorldConfig()
 │   │   ├── worldConfig.test.ts
 │   │   ├── mock.ts            # MockDataSource (random state changes)
-│   │   └── live.ts            # LiveDataSource polling /api/openclaw/snapshot
+│   │   ├── live.ts            # LiveDataSource polling /api/openclaw/snapshot
+│   │   └── liveEvents.ts      # WS locally; protected AgentCore event polling in AWS
 │   ├── store/
 │   │   ├── worldStore.ts      # worldConfig, isMockMode, inspectorSelection
 │   │   └── characterStore.ts  # characterStates, occupancy map

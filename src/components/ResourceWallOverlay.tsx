@@ -2,6 +2,10 @@ import { useState, useEffect, useCallback, useRef } from "react";
 
 import { useWorldStore } from "@/store/worldStore";
 import { FilePreview } from "@/components/FilePreview";
+import {
+  authenticatedFetch,
+  downloadAuthenticatedFile,
+} from "@/data/authenticatedFetch";
 
 import "./ResourceWallOverlay.css";
 
@@ -18,7 +22,7 @@ type FilesResponse = {
 const API_BASE = "";
 
 async function fetchEntries(relPath: string): Promise<FilesResponse> {
-  const res = await fetch(
+  const res = await authenticatedFetch(
     `${API_BASE}/api/files?path=${encodeURIComponent(relPath)}`,
   );
   if (!res.ok) {
@@ -129,6 +133,15 @@ export function ResourceWallOverlay(): JSX.Element | null {
     } else {
       setSelectedFile(fullPath);
     }
+  };
+
+  const handleDownload = (filePath: string, filename: string): void => {
+    void downloadAuthenticatedFile(
+      `/api/file?path=${encodeURIComponent(filePath)}`,
+      filename,
+    ).catch((err: unknown) => {
+      setError(err instanceof Error ? err.message : String(err));
+    });
   };
 
   const handleResizePointerDown = (e: React.PointerEvent): void => {
@@ -273,16 +286,18 @@ export function ResourceWallOverlay(): JSX.Element | null {
                       {entry.name}
                     </button>
                     {entry.type === "file" && (
-                      <a
+                      <button
+                        type="button"
                         className="resource-wall-overlay__entry-download"
-                        href={`/api/file?path=${encodeURIComponent(fullPath)}`}
-                        download={entry.name}
                         title={`Download ${entry.name}`}
                         aria-label={`Download ${entry.name}`}
-                        onClick={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDownload(fullPath, entry.name);
+                        }}
                       >
                         ↓
-                      </a>
+                      </button>
                     )}
                   </div>
                 );

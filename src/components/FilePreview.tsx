@@ -3,6 +3,11 @@ import { useState, useEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import hljs from "highlight.js";
 
+import {
+  authenticatedFetch,
+  downloadAuthenticatedFile,
+} from "@/data/authenticatedFetch";
+
 import "./FilePreview.css";
 
 type FilePreviewProps = {
@@ -74,6 +79,78 @@ function fileUrl(filePath: string): string {
   return `${FILE_URL_BASE}${encodeURIComponent(filePath)}`;
 }
 
+function useAuthenticatedObjectUrl(url: string): {
+  objectUrl: string | null;
+  error: string | null;
+} {
+  const [objectUrl, setObjectUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    let nextObjectUrl: string | null = null;
+
+    setObjectUrl(null);
+    setError(null);
+    void authenticatedFetch(url)
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        nextObjectUrl = URL.createObjectURL(await response.blob());
+        if (active) {
+          setObjectUrl(nextObjectUrl);
+        } else {
+          URL.revokeObjectURL(nextObjectUrl);
+        }
+      })
+      .catch((err: unknown) => {
+        if (active) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      });
+
+    return () => {
+      active = false;
+      if (nextObjectUrl) {
+        URL.revokeObjectURL(nextObjectUrl);
+      }
+    };
+  }, [url]);
+
+  return { objectUrl, error };
+}
+
+function DownloadButton({
+  url,
+  filename,
+}: {
+  url: string;
+  filename: string;
+}): JSX.Element {
+  const [error, setError] = useState<string | null>(null);
+
+  const handleClick = (): void => {
+    setError(null);
+    void downloadAuthenticatedFile(url, filename).catch((err: unknown) => {
+      setError(err instanceof Error ? err.message : String(err));
+    });
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        className="file-preview__download"
+        onClick={handleClick}
+      >
+        Download file
+      </button>
+      {error && <p className="file-preview__error">{error}</p>}
+    </>
+  );
+}
+
 /**
  * FilePreview
  *
@@ -104,9 +181,7 @@ export function FilePreview({ filePath }: FilePreviewProps): JSX.Element {
       return (
         <div className="file-preview file-preview--unknown">
           <p>No preview available for this file type.</p>
-          <a href={url} download className="file-preview__download">
-            Download file
-          </a>
+          <DownloadButton url={url} filename={filePath} />
         </div>
       );
   }
@@ -123,33 +198,69 @@ function ImagePreview({
   url: string;
   name: string;
 }): JSX.Element {
+  const source = useAuthenticatedObjectUrl(url);
+  if (source.error) {
+    return <p className="file-preview__error">{source.error}</p>;
+  }
+  if (!source.objectUrl) {
+    return <p className="file-preview__loading">Loading…</p>;
+  }
+
   return (
     <div className="file-preview file-preview--image">
-      <img src={url} alt={name} className="file-preview__image" />
+      <img src={source.objectUrl} alt={name} className="file-preview__image" />
     </div>
   );
 }
 
 function AudioPreview({ url }: { url: string }): JSX.Element {
+  const source = useAuthenticatedObjectUrl(url);
+  if (source.error) {
+    return <p className="file-preview__error">{source.error}</p>;
+  }
+  if (!source.objectUrl) {
+    return <p className="file-preview__loading">Loading…</p>;
+  }
+
   return (
     <div className="file-preview file-preview--audio">
-      <audio controls src={url} className="file-preview__audio" />
+      <audio controls src={source.objectUrl} className="file-preview__audio" />
     </div>
   );
 }
 
 function VideoPreview({ url }: { url: string }): JSX.Element {
+  const source = useAuthenticatedObjectUrl(url);
+  if (source.error) {
+    return <p className="file-preview__error">{source.error}</p>;
+  }
+  if (!source.objectUrl) {
+    return <p className="file-preview__loading">Loading…</p>;
+  }
+
   return (
     <div className="file-preview file-preview--video">
-      <video controls src={url} className="file-preview__video" />
+      <video controls src={source.objectUrl} className="file-preview__video" />
     </div>
   );
 }
 
 function PdfPreview({ url }: { url: string }): JSX.Element {
+  const source = useAuthenticatedObjectUrl(url);
+  if (source.error) {
+    return <p className="file-preview__error">{source.error}</p>;
+  }
+  if (!source.objectUrl) {
+    return <p className="file-preview__loading">Loading…</p>;
+  }
+
   return (
     <div className="file-preview file-preview--pdf">
-      <embed src={url} type="application/pdf" className="file-preview__pdf" />
+      <embed
+        src={source.objectUrl}
+        type="application/pdf"
+        className="file-preview__pdf"
+      />
     </div>
   );
 }
@@ -163,7 +274,7 @@ function MarkdownPreview({ url }: { url: string }): JSX.Element {
     setContent(null);
     setError(null);
     setRawMode(false);
-    fetch(url)
+    authenticatedFetch(url)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.text();
@@ -213,7 +324,7 @@ function TextPreview({
   useEffect(() => {
     setContent(null);
     setError(null);
-    fetch(url)
+    authenticatedFetch(url)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.text();
@@ -267,7 +378,7 @@ function JsonPreview({ url }: { url: string }): JSX.Element {
     setCollapsedPaths({});
     setRawMode(false);
     setCompactMode(false);
-    fetch(url)
+    authenticatedFetch(url)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.text();
@@ -687,7 +798,7 @@ function CsvPreview({
     setError(null);
     setRawMode(false);
     setColumnWidths([]);
-    fetch(url)
+    authenticatedFetch(url)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         return r.text();

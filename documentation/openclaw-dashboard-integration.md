@@ -21,12 +21,14 @@ The dashboard originally expected to talk to a reachable OpenClaw gateway WebSoc
 
 So the deployed design is:
 
-1. **Browser -> local Express server**
-2. **local Express server -> InvokeAgentRuntime** for snapshots and event polling
+1. **Browser -> CloudFront -> Cognito-protected API Gateway REST API**
+2. **Lambda -> InvokeAgentRuntime** for snapshots and event polling
 3. **AgentCore runtime -> internal OpenClaw gateway** for snapshot/event extraction when available
 4. **AgentCore runtime -> synthetic dashboard events** when the lightweight path handled the reply instead of the full gateway
 
-This is slightly hacky, but it matches the actual runtime constraints and keeps the browser-side contract stable.
+Local development still uses the Express server and `/api/ws`. The AWS deployment
+uses direct browser polling because the API Gateway WebSocket has no producer
+that subscribes to AgentCore runtime events.
 
 ### What is "real" vs "synthetic"
 
@@ -41,6 +43,8 @@ The browser does not need to distinguish them for rendering, but operators shoul
 - The dashboard must stay pinned to the same **actorId / userId / runtimeSessionId** as the Telegram conversation it wants to observe.
 - After a redeploy, an old `runtimeSessionId` may still exist in local config but no longer represent the currently running container.
 - The polling relay is **best effort near-live**, not a true server-push channel from AWS to the browser.
+- Deployed REST requests require a Cognito ID token. The legacy API Gateway
+  WebSocket is not part of the authenticated AgentCore polling path.
 
 ---
 
@@ -82,7 +86,7 @@ The browser does not need to distinguish them for rendering, but operators shoul
         └──────────────────────────────────────────────────────────────────────────┘
 
 
-Browser-side relay path
+Local development relay path
 
 ┌────────────────────┐     ws://localhost:5173/api/ws      ┌──────────────────────┐
 │  React frontend    │◀────────────────────────────────────│   Vite dev server    │
@@ -107,7 +111,26 @@ Browser-side relay path
 3. **Live UI events can come from two runtime sources:**
    - real OpenClaw gateway events
    - synthetic events created from lightweight warm-up/fallback responses
-4. **The browser still sees a normal local WebSocket**, but the AWS side is actually powered by repeated `dashboard_events` polling.
+4. **Local development still sees a normal WebSocket.** The deployed AWS
+   frontend instead polls the Lambda REST endpoint directly.
+
+### Deployed AWS browser path
+
+```text
+React LiveEventSource
+    │ GET /api/openclaw/events?since=<seq> every 2 s
+    │ Authorization: Bearer <Cognito ID token>
+    ▼
+CloudFront -> API Gateway Cognito authorizer -> Backend Lambda
+    │ InvokeAgentRuntime(action=dashboard_events)
+    ▼
+AgentCore runtime in-memory event buffer
+```
+
+The polling timer exists only in the open browser page. Closing the tab stops
+polling. Hidden tabs pause polling and resume when visible. Network failures are
+retried automatically. A `401` causes the login shell to clear the session and
+reload to the login screen.
 
 ---
 
@@ -119,6 +142,9 @@ The browser does not connect to OpenClaw directly. Instead, the React app talks 
 - `WS /api/ws`
 
 The server then adapts either a local gateway or the AgentCore bridge.
+
+In an AWS deployment, `config.json` provides `eventPollUrl`. `LiveEventSource`
+uses that REST endpoint instead of opening `/api/ws`.
 
 ```
 Browser (React)
@@ -329,6 +355,16 @@ If no reachable bridge WebSocket URL exists, the dashboard server uses the same 
 
 The runtime buffers normalized dashboard events in-memory and returns only events after the caller's last seen sequence number. The local server forwards those events to the browser over `/api/ws`, so the frontend still gets `agent-message`, `agent-stream`, and `agent-lifecycle` updates even when no public runtime WebSocket URL exists.
 
+For AWS deployments, Lambda exposes the same result at:
+
+```text
+GET /api/openclaw/events?since=<last-sequence>
+```
+
+The deployed frontend calls this endpoint every two seconds and advances to the
+returned `nextSeq`. API Gateway validates the Cognito ID token before Lambda or
+AgentCore is invoked.
+
 Before rebroadcasting to browser clients, the local relay also normalizes each agent event by:
 
 - filling blank/default-session `agentId` values with the dashboard default agent (`main`)
@@ -363,7 +399,7 @@ Timing is driven by the Phaser update loop, so browser pauses do not consume the
 reading period. `src/game/utils/speechPlayback.ts` owns the timing logic, while
 `CharacterSprite` owns clipping and positioning.
 
-This fallback is the core AgentCore workaround:
+For local development, the fallback works as follows:
 
 1. the browser keeps a normal local WebSocket connection to `/api/ws`
 2. the local server polls `dashboard_events`
@@ -371,6 +407,11 @@ This fallback is the core AgentCore workaround:
 4. the local server re-broadcasts those normalized events to browser clients
 
 That means the browser still behaves like a WebSocket client even though the AWS side is actually a poll-based relay.
+
+For the deployed AWS dashboard, steps 1, 2, and 4 are replaced by direct,
+Cognito-protected browser polling through Lambda. The API Gateway WebSocket
+connection table remains for compatibility, but no AgentCore producer currently
+pushes runtime events into it.
 
 ### Session alignment requirements
 
@@ -977,7 +1018,13 @@ app.get("/api/openclaw/snapshot", async (_req, res) => {
 
 The frontend polls `/api/openclaw/snapshot` every 20 seconds in `src/data/live.ts`.
 
-This polling path still drives the character state machine (`working` / `idle`) even though live message bubbles come from `/api/ws`.
+This polling path still drives the character state machine (`working` / `idle`).
+In local mode, live message bubbles come from `/api/ws`. In an AWS deployment,
+`src/data/liveEvents.ts` polls `/api/openclaw/events` every two seconds.
+
+Both deployed REST pollers use `authenticatedFetch`, which adds the Cognito ID
+token. A `401` logs the browser out rather than continuing unauthenticated
+requests.
 
 ### Constants
 
