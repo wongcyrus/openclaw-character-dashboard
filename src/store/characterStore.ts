@@ -49,6 +49,8 @@ export type CharacterMessage = {
   text: string;
   role: string;
   timestamp: number;
+  runId?: string;
+  complete?: boolean;
 };
 
 type CharacterStoreState = {

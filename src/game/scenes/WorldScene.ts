@@ -222,17 +222,24 @@ export class WorldScene extends Phaser.Scene {
     });
 
     // Subscribe to character messages to show/hide speech bubbles
-    useCharacterStore.subscribe((state) => {
+    const unsubscribeMessages = useCharacterStore.subscribe((state, prev) => {
+      if (state.characterMessages === prev.characterMessages) return;
       const messages = state.characterMessages;
       for (const [charId, record] of this.characters.entries()) {
         const msg = messages[charId];
         if (msg) {
-          record.sprite.showSpeech(msg.text);
+          record.sprite.showSpeech(msg, () => {
+            const store = useCharacterStore.getState();
+            if (store.characterMessages[charId] === msg) {
+              store.setCharacterMessage(charId, null);
+            }
+          });
         } else {
           record.sprite.hideSpeech();
         }
       }
     });
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, unsubscribeMessages);
   }
 
   update(_time: number, delta: number): void {

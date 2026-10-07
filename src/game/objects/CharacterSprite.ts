@@ -1,6 +1,13 @@
 import Phaser from "phaser";
 
 import type { CharacterConfig } from "@/types/world";
+import type { CharacterMessage } from "@/store/characterStore";
+import { SpeechPlayback } from "@/game/utils/speechPlayback";
+
+const SPEECH_WIDTH = 400;
+const SPEECH_VIEW_HEIGHT = 144;
+const SPEECH_PADDING = 20;
+const SPEECH_HEIGHT = SPEECH_VIEW_HEIGHT + SPEECH_PADDING * 2;
 
 // ---------------------------------------------------------------------------
 // Animation clip names (match spec/character-sprite-sheet.csv)
@@ -65,6 +72,11 @@ export class CharacterSprite extends Phaser.GameObjects.Sprite {
   private speechBubble: Phaser.GameObjects.Container | null = null;
   private speechText: Phaser.GameObjects.Text | null = null;
   private speechBg: Phaser.GameObjects.Graphics | null = null;
+  private speechMaskGraphics: Phaser.GameObjects.Graphics | null = null;
+  private speechMask: Phaser.Display.Masks.GeometryMask | null = null;
+  private speechPlayback = new SpeechPlayback();
+  private speechMessage: CharacterMessage | null = null;
+  private onSpeechComplete: (() => void) | null = null;
 
   constructor(
     scene: Phaser.Scene,
@@ -89,59 +101,89 @@ export class CharacterSprite extends Phaser.GameObjects.Sprite {
   }
 
   private createSpeechBubble(): void {
-    const bubbleWidth = 180;
-    const padding = 10;
-
     this.speechBg = this.scene.add.graphics();
-    this.speechText = this.scene.add.text(0, 0, "", {
-      fontSize: "14px",
-      fontFamily: "monospace",
-      color: "#ffffff",
-      align: "left",
-      wordWrap: { width: bubbleWidth - padding * 2 },
-    });
-    this.speechText.setOrigin(0.5, 1);
+    this.speechText = this.scene.add.text(
+      -SPEECH_WIDTH / 2 + SPEECH_PADDING,
+      -SPEECH_HEIGHT + SPEECH_PADDING,
+      "",
+      {
+        fontSize: "14px",
+        fontFamily: "monospace",
+        color: "#ffffff",
+        align: "left",
+        wordWrap: {
+          width: SPEECH_WIDTH - SPEECH_PADDING * 2,
+          useAdvancedWrap: true,
+        },
+      },
+    );
+    this.speechText.setOrigin(0, 0);
+    this.speechMaskGraphics = this.scene.make.graphics({ x: 0, y: 0 });
+    this.speechMask = this.speechMaskGraphics.createGeometryMask();
+    this.speechText.setMask(this.speechMask);
 
-    this.speechBubble = this.scene.add.container(0, 0, [this.speechText]);
+    this.speechBubble = this.scene.add.container(0, 0, [
+      this.speechBg,
+      this.speechText,
+    ]);
     this.speechBubble.setVisible(false);
     this.speechBubble.setDepth(20000); // Well above characters
   }
 
-  showSpeech(text: string): void {
+  showSpeech(message: CharacterMessage, onComplete: () => void): void {
     if (!this.speechText || !this.speechBubble || !this.speechBg) return;
+    if (message === this.speechMessage) return;
 
-    this.speechText.setText(text);
+    const previous = this.speechMessage;
+    const continues =
+      previous &&
+      this.speechBubble.visible &&
+      previous.runId === message.runId &&
+      previous.role === message.role &&
+      message.text.startsWith(previous.text);
+    if (!continues) {
+      this.speechPlayback = new SpeechPlayback();
+    } else if (message.text !== previous.text) {
+      this.speechPlayback.textChanged();
+    }
+    this.speechMessage = message;
+    this.onSpeechComplete = onComplete;
+    this.speechText.setText(message.text);
     this.speechBubble.setVisible(true);
-
-    // Redraw background
-    const bounds = this.speechText.getBounds();
-    const w = bounds.width + 20;
-    const h = bounds.height + 15;
 
     this.speechBg.clear();
     this.speechBg.fillStyle(0x000000, 0.85);
-    this.speechBg.lineStyle(2, 0xffffff, 1);
-    this.speechBg.fillRoundedRect(-w / 2, -h, w, h, 8);
-    this.speechBg.strokeRoundedRect(-w / 2, -h, w, h, 8);
+    this.speechBg.lineStyle(4, 0xffffff, 1);
+    this.speechBg.fillRoundedRect(
+      -SPEECH_WIDTH / 2,
+      -SPEECH_HEIGHT,
+      SPEECH_WIDTH,
+      SPEECH_HEIGHT,
+      16,
+    );
+    this.speechBg.strokeRoundedRect(
+      -SPEECH_WIDTH / 2,
+      -SPEECH_HEIGHT,
+      SPEECH_WIDTH,
+      SPEECH_HEIGHT,
+      16,
+    );
 
-    // Add a little triangle at the bottom
     this.speechBg.beginPath();
-    this.speechBg.moveTo(-8, 0);
-    this.speechBg.lineTo(0, 8);
-    this.speechBg.lineTo(8, 0);
+    this.speechBg.moveTo(-16, 0);
+    this.speechBg.lineTo(0, 16);
+    this.speechBg.lineTo(16, 0);
     this.speechBg.closePath();
     this.speechBg.fillPath();
     this.speechBg.strokePath();
-
-    if (this.speechBubble.list[0] !== this.speechBg) {
-      this.speechBubble.addAt(this.speechBg, 0);
-    }
 
     this.updateSpeechPosition();
   }
 
   hideSpeech(): void {
     this.speechBubble?.setVisible(false);
+    this.speechMessage = null;
+    this.onSpeechComplete = null;
   }
 
   private updateSpeechPosition(): void {
@@ -151,27 +193,65 @@ export class CharacterSprite extends Phaser.GameObjects.Sprite {
     let targetX = this.x;
     let targetY = this.y - this.displayHeight - 15;
 
-    // Keep on screen
-    const bubbleBounds = this.speechBubble.getBounds();
     const sceneWidth = this.scene.scale.width;
 
-    if (targetX - bubbleBounds.width / 2 < 10)
-      targetX = bubbleBounds.width / 2 + 10;
-    if (targetX + bubbleBounds.width / 2 > sceneWidth - 10)
-      targetX = sceneWidth - bubbleBounds.width / 2 - 10;
-    if (targetY - bubbleBounds.height < 10) targetY = bubbleBounds.height + 10;
+    targetX = Phaser.Math.Clamp(
+      targetX,
+      SPEECH_WIDTH / 2 + 10,
+      sceneWidth - SPEECH_WIDTH / 2 - 10,
+    );
+    targetY = Phaser.Math.Clamp(
+      targetY,
+      SPEECH_HEIGHT + 10,
+      this.scene.scale.height - 28,
+    );
 
     this.speechBubble.setPosition(targetX, targetY);
+    this.speechText?.setY(
+      -SPEECH_HEIGHT + SPEECH_PADDING - this.speechPlayback.offset,
+    );
+    this.speechMaskGraphics
+      ?.clear()
+      .fillStyle(0xffffff)
+      .fillRect(
+        targetX - SPEECH_WIDTH / 2 + SPEECH_PADDING,
+        targetY - SPEECH_HEIGHT + SPEECH_PADDING,
+        SPEECH_WIDTH - SPEECH_PADDING * 2,
+        SPEECH_VIEW_HEIGHT,
+      );
   }
 
   preUpdate(time: number, delta: number): void {
     super.preUpdate(time, delta);
-    if (this.speechBubble?.visible) {
+    if (this.speechBubble?.visible && this.speechText && this.speechMessage) {
+      const finished = this.speechPlayback.advance(
+        delta,
+        Math.max(0, this.speechText.height - SPEECH_VIEW_HEIGHT),
+        this.speechMessage.complete ?? true,
+      );
       this.updateSpeechPosition();
+      if (finished) {
+        const onComplete = this.onSpeechComplete;
+        this.hideSpeech();
+        onComplete?.();
+      }
     }
   }
 
-  // ... (rest of the class)
+  override destroy(fromScene?: boolean): void {
+    this.speechText?.clearMask();
+    this.speechMask?.destroy();
+    this.speechMaskGraphics?.destroy();
+    this.speechBubble?.destroy();
+    this.speechBubble = null;
+    this.speechText = null;
+    this.speechBg = null;
+    this.speechMask = null;
+    this.speechMaskGraphics = null;
+    this.speechMessage = null;
+    this.onSpeechComplete = null;
+    super.destroy(fromScene);
+  }
 
   /** Play a named animation clip. "walk-right" is walk-left with flipX. */
   playClip(clip: AnimationClip): void {
