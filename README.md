@@ -4,7 +4,7 @@ Author: An IT-a
 
 [Subscribe and Follow me! ❤️](https://profile.an-it-a.com/)
 
-![Preview](documentation/images/frieren-preview.png)
+![Preview](documentation/images/screen.png)
 
 ---
 
@@ -12,6 +12,7 @@ Author: An IT-a
 >
 > - English version: [README-en.md](./README-en.md)
 > - 開發者 / 技術參考: [README-tech.md](./README-tech.md)
+> - 本地架構與設定文件: [documentation/README.md](./documentation/README.md)
 
 ---
 
@@ -157,6 +158,14 @@ OPENCLAW_HOME=/你的/.openclaw路徑
 一般情況下只需修改 `OPENCLAW_HOME`，其餘項保持預設即可。
 
 修改 `.env.local` 後，需要重新啟動看板才能生效。
+
+### 技術文件索引
+
+- [本地 OpenClaw 整合與即時訊息流程](documentation/openclaw-dashboard-integration.md)
+- [專案結構](documentation/project-structure.md)
+- [新增 Agent 與角色](documentation/adding-an-agent.md)
+- [`world.json` 與動畫設定參考](documentation/world-json-reference.md)
+- [尋路系統](documentation/pathfinding.md)
 
 ---
 
