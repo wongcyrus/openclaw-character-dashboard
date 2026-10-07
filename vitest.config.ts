@@ -15,7 +15,20 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "lcov"],
       include: ["src/**/*.ts", "src/**/*.tsx"],
-      exclude: ["src/test-setup.ts", "src/main.tsx"],
+      exclude: [
+        "src/test-setup.ts",
+        "src/main.tsx",
+        "src/game/PhaserGame.tsx",
+        "src/game/WorldMap.ts",
+        "src/game/objects/CharacterSprite.ts",
+        "src/game/scenes/**",
+      ],
+      thresholds: {
+        branches: 70,
+        functions: 70,
+        lines: 70,
+        statements: 70,
+      },
     },
   },
 });
