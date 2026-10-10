@@ -8,12 +8,13 @@ describe("characterStore", () => {
     useCharacterStore.setState({
       characterStates: {},
       characterMessages: {},
+      characterHistory: {},
       occupiedPoints: {},
       pendingForce: null,
     });
   });
 
-  it("updates character state and message lifecycle", () => {
+  it("updates character state and message lifecycle and records history", () => {
     const store = useCharacterStore.getState();
     store.setCharacterState({
       characterId: "alice",
@@ -21,23 +22,56 @@ describe("characterStore", () => {
       subState: "working",
       currentRoomId: "office",
     });
+
+    // 1. User message arrives
     store.setCharacterMessage("alice", {
-      text: "Hello",
-      role: "assistant",
-      timestamp: 1,
+      text: "What is the mission?",
+      role: "user",
+      timestamp: 100,
+      runId: "run-1",
     });
 
-    expect(useCharacterStore.getState().characterStates.alice.mainState).toBe(
-      "working",
-    );
     expect(useCharacterStore.getState().characterMessages.alice.text).toBe(
-      "Hello",
+      "What is the mission?",
+    );
+    expect(useCharacterStore.getState().characterHistory.alice).toHaveLength(1);
+    expect(useCharacterStore.getState().characterHistory.alice[0].role).toBe(
+      "user",
     );
 
+    // 2. Agent streaming chunk 1
+    store.setCharacterMessage("alice", {
+      text: "Defeat",
+      role: "assistant",
+      timestamp: 101,
+      runId: "run-1",
+      complete: false,
+    });
+    expect(useCharacterStore.getState().characterHistory.alice).toHaveLength(2);
+
+    // 3. Agent streaming chunk 2 (same runId + role -> updates in place)
+    store.setCharacterMessage("alice", {
+      text: "Defeat the demon king.",
+      role: "assistant",
+      timestamp: 102,
+      runId: "run-1",
+      complete: true,
+    });
+    expect(useCharacterStore.getState().characterHistory.alice).toHaveLength(2);
+    expect(useCharacterStore.getState().characterHistory.alice[1].text).toBe(
+      "Defeat the demon king.",
+    );
+
+    // 4. Speech bubble closes, history persists
     store.setCharacterMessage("alice", null);
     expect(
       useCharacterStore.getState().characterMessages.alice,
     ).toBeUndefined();
+    expect(useCharacterStore.getState().characterHistory.alice).toHaveLength(2);
+
+    // 5. Clear history
+    store.clearCharacterHistory("alice");
+    expect(useCharacterStore.getState().characterHistory.alice).toBeUndefined();
   });
 
   it("claims, looks up, and releases interaction points safely", () => {

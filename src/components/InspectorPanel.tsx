@@ -1,5 +1,8 @@
+import { useEffect, useRef } from "react";
+
 import { useWorldStore } from "@/store/worldStore";
 import { useCharacterStore } from "@/store/characterStore";
+import { formatSenderHeader } from "@/utils/messageFormat";
 
 import "./InspectorPanel.css";
 
@@ -13,6 +16,20 @@ export function InspectorPanel(): JSX.Element {
   const selection = useWorldStore((s) => s.inspectorSelection);
   const worldConfig = useWorldStore((s) => s.worldConfig);
   const characterStates = useCharacterStore((s) => s.characterStates);
+  const characterHistory = useCharacterStore((s) => s.characterHistory);
+
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const selectedCharHistory =
+    selection?.type === "character"
+      ? (characterHistory[selection.characterId] ?? [])
+      : [];
+
+  useEffect(() => {
+    if (selectedCharHistory.length > 0) {
+      messagesEndRef.current?.scrollIntoView?.({ behavior: "smooth" });
+    }
+  }, [selectedCharHistory.length]);
 
   if (!selection) {
     return (
@@ -55,6 +72,52 @@ export function InspectorPanel(): JSX.Element {
               "—"}
           </dd>
         </dl>
+
+        <section className="inspector-panel__dialogue">
+          <div className="inspector-panel__section-header">
+            <h3 className="inspector-panel__section-title">Recent Dialogue</h3>
+            {selectedCharHistory.length > 0 && (
+              <span className="inspector-panel__badge">
+                {selectedCharHistory.length}
+              </span>
+            )}
+          </div>
+          {selectedCharHistory.length === 0 ? (
+            <p className="inspector-panel__dialogue-empty">
+              No recent messages
+            </p>
+          ) : (
+            <div className="dialogue-list">
+              {selectedCharHistory.map((msg, idx) => {
+                const isUser = msg.role === "user";
+                const timeStr = new Date(msg.timestamp).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  second: "2-digit",
+                });
+                return (
+                  <div
+                    key={`${msg.timestamp}-${idx}`}
+                    className={`dialogue-item dialogue-item--${isUser ? "user" : "agent"}`}
+                  >
+                    <div className="dialogue-item__header">
+                      <span className="dialogue-item__sender">
+                        {formatSenderHeader(
+                          msg.role,
+                          charConfig?.name ?? selection.characterId,
+                          msg.channel,
+                        )}
+                      </span>
+                      <span className="dialogue-item__time">{timeStr}</span>
+                    </div>
+                    <div className="dialogue-item__content">{msg.text}</div>
+                  </div>
+                );
+              })}
+              <div ref={messagesEndRef} />
+            </div>
+          )}
+        </section>
       </aside>
     );
   }

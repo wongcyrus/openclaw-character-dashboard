@@ -1,33 +1,74 @@
 import { useCharacterStore } from "@/store/characterStore";
 import { useWorldStore } from "@/store/worldStore";
 
-const DEFAULT_DASHBOARD_AGENT_ID = "main";
+export const DEFAULT_DASHBOARD_AGENT_ID = "main";
 const RECONNECT_DELAY_MS = 5_000;
+
+export function normalizeId(id: string): string {
+  return id.toLowerCase().replace(/[-_\s]/g, "");
+}
+
+export function findMatchingCharacter(
+  characters: Array<{ id: string; agentId: string; name: string }> | undefined,
+  agentId: string | undefined,
+): { id: string; agentId: string; name: string } | undefined {
+  if (!characters || characters.length === 0) return undefined;
+
+  const raw = agentId?.trim() ?? "";
+  if (!raw || raw.toLowerCase() === "default" || raw.toLowerCase() === "main") {
+    return (
+      characters.find((c) => c.agentId === DEFAULT_DASHBOARD_AGENT_ID) ??
+      characters.find((c) => c.id === DEFAULT_DASHBOARD_AGENT_ID) ??
+      characters.find((c) => c.agentId.toLowerCase() === "default") ??
+      characters[0]
+    );
+  }
+
+  // 1. Direct match on agentId
+  const directAgentMatch = characters.find((c) => c.agentId === raw);
+  if (directAgentMatch) return directAgentMatch;
+
+  // 2. Direct match on character.id
+  const directIdMatch = characters.find((c) => c.id === raw);
+  if (directIdMatch) return directIdMatch;
+
+  // 3. Direct match on character.name (case-insensitive)
+  const directNameMatch = characters.find(
+    (c) => c.name.toLowerCase() === raw.toLowerCase(),
+  );
+  if (directNameMatch) return directNameMatch;
+
+  // 4. Normalized match (ignoring case, hyphens, underscores, whitespace)
+  const norm = normalizeId(raw);
+  const normMatch = characters.find(
+    (c) =>
+      normalizeId(c.agentId) === norm ||
+      normalizeId(c.id) === norm ||
+      normalizeId(c.name) === norm,
+  );
+  if (normMatch) return normMatch;
+
+  return undefined;
+}
 
 export class LiveEventSource {
   private ws: WebSocket | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private isStarted = false;
 
-  constructor() {
-    this.handleVisibilityChange = this.handleVisibilityChange.bind(this);
-  }
-
   start(): void {
     if (this.isStarted) return;
     this.isStarted = true;
-    window.addEventListener("visibilitychange", this.handleVisibilityChange);
     this.connect();
   }
 
   stop(): void {
     this.isStarted = false;
-    window.removeEventListener("visibilitychange", this.handleVisibilityChange);
     this.disconnect();
   }
 
   private connect(): void {
-    if (this.ws || !this.isStarted || document.hidden) return;
+    if (this.ws || !this.isStarted) return;
 
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const wsUrl = `${protocol}//${window.location.host}/api/ws`;
@@ -49,7 +90,7 @@ export class LiveEventSource {
 
     this.ws.onclose = (event) => {
       this.ws = null;
-      if (this.isStarted && !document.hidden && event.code !== 1000) {
+      if (this.isStarted && event.code !== 1000) {
         console.warn(
           `[LiveEventSource] Disconnected, reconnecting in ${RECONNECT_DELAY_MS / 1000}s...`,
         );
@@ -77,14 +118,6 @@ export class LiveEventSource {
     }
   }
 
-  private handleVisibilityChange(): void {
-    if (document.hidden) {
-      this.disconnect();
-    } else if (this.isStarted) {
-      this.connect();
-    }
-  }
-
   private handleEvent(data: unknown): void {
     if (!data || typeof data !== "object" || !("type" in data)) {
       console.error("[LiveEventSource] Invalid dashboard event", data);
@@ -102,18 +135,14 @@ export class LiveEventSource {
     }
 
     const worldConfig = useWorldStore.getState().worldConfig;
-    const agentId =
+    const rawAgentId =
       typeof event.agentId === "string" && event.agentId.trim()
         ? event.agentId
-        : DEFAULT_DASHBOARD_AGENT_ID;
-    const character =
-      worldConfig?.characters.find((item) => item.agentId === agentId) ??
-      worldConfig?.characters.find(
-        (item) => item.agentId === DEFAULT_DASHBOARD_AGENT_ID,
-      );
+        : undefined;
+    const character = findMatchingCharacter(worldConfig?.characters, rawAgentId);
     if (!character) {
       console.warn("[LiveEventSource] No character mapping for event", {
-        agentId,
+        agentId: rawAgentId,
       });
       return;
     }
@@ -131,6 +160,10 @@ export class LiveEventSource {
       }
 
       const role = typeof event.role === "string" ? event.role : "assistant";
+      const channel =
+        typeof event.channel === "string" && event.channel.trim()
+          ? event.channel.trim()
+          : undefined;
       const sameRun = currentMessage?.runId === runId;
       const newText =
         event.type === "agent-stream"
@@ -144,7 +177,11 @@ export class LiveEventSource {
         role,
         timestamp: Date.now(),
         runId,
-        complete: role === "user",
+        channel: channel ?? (sameRun ? currentMessage?.channel : undefined),
+        complete:
+          role === "user" ||
+          event.type === "agent-message" ||
+          event.complete === true,
       });
       return;
     }
@@ -158,7 +195,12 @@ export class LiveEventSource {
     if (
       isComplete &&
       currentMessage &&
-      (!runId || currentMessage.runId === runId)
+      (!runId ||
+        !currentMessage.runId ||
+        currentMessage.runId === "unknown" ||
+        currentMessage.runId === runId ||
+        (currentMessage.runId && runId.includes(currentMessage.runId)) ||
+        (runId && currentMessage.runId.includes(runId)))
     ) {
       useCharacterStore.getState().setCharacterMessage(characterId, {
         ...currentMessage,

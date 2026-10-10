@@ -204,5 +204,9 @@ function agentIdFromSessionKey(key: string | undefined): string {
   }
 
   const parts = key.split(":");
+  const agentIdx = parts.indexOf("agent");
+  if (agentIdx !== -1 && parts[agentIdx + 1]) {
+    return parts[agentIdx + 1];
+  }
   return parts[0] === "agent" ? (parts[1] ?? "") : "";
 }

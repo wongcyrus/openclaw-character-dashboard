@@ -178,4 +178,42 @@ describe("dashboard controls", () => {
     expect(screen.getByRole("heading", { name: "missing" })).toBeVisible();
     expect(screen.getByText("Empty")).toBeVisible();
   });
+
+  it("renders dialogue history for selected character with channel badges", () => {
+    useCharacterStore.setState({
+      characterHistory: {
+        alice: [
+          {
+            text: "Hello Alice, what are you working on?",
+            role: "user",
+            channel: "telegram",
+            timestamp: Date.now() - 5000,
+            runId: "run-1",
+          },
+          {
+            text: "I am researching magical spells.",
+            role: "assistant",
+            channel: "telegram",
+            timestamp: Date.now() - 2000,
+            runId: "run-1",
+          },
+        ],
+      },
+    });
+
+    useWorldStore.setState({
+      inspectorSelection: { type: "character", characterId: "alice" },
+    });
+
+    render(<InspectorPanel />);
+
+    expect(screen.getByText("Recent Dialogue")).toBeVisible();
+    expect(screen.getByText("📨 User (Telegram)")).toBeVisible();
+    expect(
+      screen.getByText("Hello Alice, what are you working on?"),
+    ).toBeVisible();
+    expect(screen.getByText("✨ Alice (Telegram)")).toBeVisible();
+    expect(screen.getByText("I am researching magical spells.")).toBeVisible();
+  });
 });
+

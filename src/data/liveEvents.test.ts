@@ -4,7 +4,11 @@ import { useCharacterStore } from "@/store/characterStore";
 import { useWorldStore } from "@/store/worldStore";
 import type { WorldConfig } from "@/types/world";
 
-import { LiveEventSource } from "./liveEvents";
+import {
+  findMatchingCharacter,
+  LiveEventSource,
+  normalizeId,
+} from "./liveEvents";
 
 class TestWebSocket {
   static latest: TestWebSocket | null = null;
@@ -41,8 +45,89 @@ const world: WorldConfig = {
         frameHeight: 64,
       },
     },
+    {
+      id: "himmel",
+      agentId: "robot_1",
+      name: "Himmel",
+      privateRoomId: "private-himmel",
+      spriteSheet: {
+        inside: "inside.png",
+        outside: "outside.png",
+        frameWidth: 64,
+        frameHeight: 64,
+      },
+    },
+    {
+      id: "land",
+      agentId: "communication_manager",
+      name: "Land",
+      privateRoomId: "private-land",
+      spriteSheet: {
+        inside: "inside.png",
+        outside: "outside.png",
+        frameWidth: 64,
+        frameHeight: 64,
+      },
+    },
+    {
+      id: "ubel",
+      agentId: "domain-commentator",
+      name: "Übel",
+      privateRoomId: "private-ubel",
+      spriteSheet: {
+        inside: "inside.png",
+        outside: "outside.png",
+        frameWidth: 64,
+        frameHeight: 64,
+      },
+    },
   ],
 };
+
+describe("normalizeId and findMatchingCharacter", () => {
+  it("normalizes underscores, hyphens, and whitespace", () => {
+    expect(normalizeId("communication_manager")).toBe("communicationmanager");
+    expect(normalizeId("communication-manager")).toBe("communicationmanager");
+    expect(normalizeId("Robot_1")).toBe("robot1");
+    expect(normalizeId("robot-1")).toBe("robot1");
+  });
+
+  it("finds character by direct agentId match", () => {
+    expect(findMatchingCharacter(world.characters, "robot_1")?.id).toBe("himmel");
+    expect(findMatchingCharacter(world.characters, "main")?.id).toBe("alice");
+  });
+
+  it("finds character by character id", () => {
+    expect(findMatchingCharacter(world.characters, "himmel")?.id).toBe("himmel");
+    expect(findMatchingCharacter(world.characters, "land")?.id).toBe("land");
+    expect(findMatchingCharacter(world.characters, "ubel")?.id).toBe("ubel");
+  });
+
+  it("finds character by character name", () => {
+    expect(findMatchingCharacter(world.characters, "Himmel")?.id).toBe("himmel");
+    expect(findMatchingCharacter(world.characters, "Übel")?.id).toBe("ubel");
+  });
+
+  it("finds character by normalized variations (hyphen vs underscore)", () => {
+    expect(
+      findMatchingCharacter(world.characters, "communication-manager")?.id,
+    ).toBe("land");
+    expect(
+      findMatchingCharacter(world.characters, "domain_commentator")?.id,
+    ).toBe("ubel");
+    expect(findMatchingCharacter(world.characters, "robot-1")?.id).toBe("himmel");
+  });
+
+  it("falls back to default/main for empty or default agentId", () => {
+    expect(findMatchingCharacter(world.characters, undefined)?.id).toBe("alice");
+    expect(findMatchingCharacter(world.characters, "")?.id).toBe("alice");
+    expect(findMatchingCharacter(world.characters, "default")?.id).toBe("alice");
+  });
+
+  it("returns undefined for unknown agent with no match", () => {
+    expect(findMatchingCharacter(world.characters, "unknown-agent-xyz")).toBeUndefined();
+  });
+});
 
 describe("LiveEventSource", () => {
   let source: LiveEventSource;
@@ -109,6 +194,32 @@ describe("LiveEventSource", () => {
     });
   });
 
+  it("marks assistant agent-message as complete immediately", () => {
+    emit({
+      type: "agent-message",
+      content: "Hello from Telegram",
+      role: "assistant",
+    });
+    expect(useCharacterStore.getState().characterMessages.alice).toMatchObject({
+      text: "Hello from Telegram",
+      complete: true,
+    });
+  });
+
+  it("handles lifecycle end arriving before assistant message", () => {
+    emit({ type: "agent-lifecycle", phase: "end", runId: "run-tg" });
+    emit({
+      type: "agent-message",
+      content: "Final reply from OpenClaw Telegram",
+      role: "assistant",
+      runId: "run-tg",
+    });
+    expect(useCharacterStore.getState().characterMessages.alice).toMatchObject({
+      text: "Final reply from OpenClaw Telegram",
+      complete: true,
+    });
+  });
+
   it("uses main for events without an agent ID", () => {
     emit({
       type: "agent-message",
@@ -119,6 +230,52 @@ describe("LiveEventSource", () => {
     expect(useCharacterStore.getState().characterMessages.alice).toMatchObject({
       text: "Question",
       complete: true,
+    });
+  });
+
+  it("routes Telegram bot events to matching characters accurately", () => {
+    emit({
+      type: "agent-message",
+      content: "Hello from Himmel bot",
+      role: "assistant",
+      agentId: "robot_1",
+    });
+    expect(useCharacterStore.getState().characterMessages.himmel).toMatchObject({
+      text: "Hello from Himmel bot",
+      complete: true,
+    });
+
+    emit({
+      type: "agent-message",
+      content: "Hello from Land bot",
+      role: "assistant",
+      agentId: "communication-manager",
+    });
+    expect(useCharacterStore.getState().characterMessages.land).toMatchObject({
+      text: "Hello from Land bot",
+      complete: true,
+    });
+  });
+
+  it("stores channel on characterMessages and characterHistory", () => {
+    emit({
+      type: "agent-message",
+      content: "User message from WebUI",
+      role: "user",
+      channel: "webui",
+      agentId: "main",
+    });
+    expect(useCharacterStore.getState().characterMessages.alice).toMatchObject({
+      text: "User message from WebUI",
+      role: "user",
+      channel: "webui",
+      complete: true,
+    });
+    const history = useCharacterStore.getState().characterHistory.alice;
+    expect(history?.[history.length - 1]).toMatchObject({
+      text: "User message from WebUI",
+      role: "user",
+      channel: "webui",
     });
   });
 });

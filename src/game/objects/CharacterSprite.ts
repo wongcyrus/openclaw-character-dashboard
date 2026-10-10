@@ -2,12 +2,7 @@ import Phaser from "phaser";
 
 import type { CharacterConfig } from "@/types/world";
 import type { CharacterMessage } from "@/store/characterStore";
-import { SpeechPlayback } from "@/game/utils/speechPlayback";
-
-const SPEECH_WIDTH = 400;
-const SPEECH_VIEW_HEIGHT = 144;
-const SPEECH_PADDING = 20;
-const SPEECH_HEIGHT = SPEECH_VIEW_HEIGHT + SPEECH_PADDING * 2;
+import { formatSenderHeader } from "@/utils/messageFormat";
 
 // ---------------------------------------------------------------------------
 // Animation clip names (match spec/character-sprite-sheet.csv)
@@ -66,16 +61,16 @@ type ClipDef = {
  */
 export class CharacterSprite extends Phaser.GameObjects.Sprite {
   private characterId: string;
+  private characterConfig: CharacterConfig;
   private currentVariant: SpriteVariant;
   private currentClip: AnimationClip = "stand";
   private activeTween: Phaser.Tweens.Tween | null = null;
   private speechBubble: Phaser.GameObjects.Container | null = null;
+  private speechHeader: Phaser.GameObjects.Text | null = null;
   private speechText: Phaser.GameObjects.Text | null = null;
   private speechBg: Phaser.GameObjects.Graphics | null = null;
-  private speechMaskGraphics: Phaser.GameObjects.Graphics | null = null;
-  private speechMask: Phaser.Display.Masks.GeometryMask | null = null;
-  private speechPlayback = new SpeechPlayback();
   private speechMessage: CharacterMessage | null = null;
+  private speechTimer = 0;
   private onSpeechComplete: (() => void) | null = null;
 
   constructor(
@@ -89,6 +84,7 @@ export class CharacterSprite extends Phaser.GameObjects.Sprite {
     super(scene, x, y, textureKey, 0);
 
     this.characterId = config.id;
+    this.characterConfig = config;
     this.currentVariant = initialVariant;
 
     scene.add.existing(this);
@@ -101,29 +97,34 @@ export class CharacterSprite extends Phaser.GameObjects.Sprite {
   }
 
   private createSpeechBubble(): void {
+    const maxBubbleWidth = 320;
+    const paddingX = 12;
+
     this.speechBg = this.scene.add.graphics();
-    this.speechText = this.scene.add.text(
-      -SPEECH_WIDTH / 2 + SPEECH_PADDING,
-      -SPEECH_HEIGHT + SPEECH_PADDING,
-      "",
-      {
-        fontSize: "14px",
-        fontFamily: "monospace",
-        color: "#ffffff",
-        align: "left",
-        wordWrap: {
-          width: SPEECH_WIDTH - SPEECH_PADDING * 2,
-          useAdvancedWrap: true,
-        },
+
+    this.speechHeader = this.scene.add.text(0, 0, "", {
+      fontSize: "11px",
+      fontFamily: "system-ui, -apple-system, sans-serif",
+      fontStyle: "bold",
+      color: "#38bdf8",
+    });
+    this.speechHeader.setOrigin(0, 0);
+
+    this.speechText = this.scene.add.text(0, 0, "", {
+      fontSize: "13px",
+      fontFamily: "monospace, system-ui, sans-serif",
+      color: "#ffffff",
+      align: "left",
+      wordWrap: {
+        width: maxBubbleWidth - paddingX * 2,
+        useAdvancedWrap: true,
       },
-    );
+    });
     this.speechText.setOrigin(0, 0);
-    this.speechMaskGraphics = this.scene.make.graphics({ x: 0, y: 0 });
-    this.speechMask = this.speechMaskGraphics.createGeometryMask();
-    this.speechText.setMask(this.speechMask);
 
     this.speechBubble = this.scene.add.container(0, 0, [
       this.speechBg,
+      this.speechHeader,
       this.speechText,
     ]);
     this.speechBubble.setVisible(false);
@@ -131,51 +132,89 @@ export class CharacterSprite extends Phaser.GameObjects.Sprite {
   }
 
   showSpeech(message: CharacterMessage, onComplete: () => void): void {
-    if (!this.speechText || !this.speechBubble || !this.speechBg) return;
-    if (message === this.speechMessage) return;
+    if (
+      !this.speechText ||
+      !this.speechHeader ||
+      !this.speechBubble ||
+      !this.speechBg
+    )
+      return;
 
-    const previous = this.speechMessage;
-    const continues =
-      previous &&
-      this.speechBubble.visible &&
-      previous.runId === message.runId &&
-      previous.role === message.role &&
-      message.text.startsWith(previous.text);
-    if (!continues) {
-      this.speechPlayback = new SpeechPlayback();
-    } else if (message.text !== previous.text) {
-      this.speechPlayback.textChanged();
-    }
     this.speechMessage = message;
     this.onSpeechComplete = onComplete;
+    this.speechTimer = 0;
+
+    const isUser = message.role === "user";
+    const headerLabel = formatSenderHeader(
+      message.role,
+      this.characterConfig.name || this.characterId,
+      message.channel,
+    );
+    const headerColor = isUser ? "#38bdf8" : "#fbbf24";
+    const bodyColor = isUser ? "#e0f2fe" : "#ffffff";
+    const bgColor = isUser ? 0x0f172a : 0x111827;
+    const bgAlpha = 0.92;
+    const borderColor = isUser ? 0x0284c7 : 0xd97706;
+
+    this.speechHeader.setText(headerLabel);
+    this.speechHeader.setColor(headerColor);
+
     this.speechText.setText(message.text);
+    this.speechText.setColor(bodyColor);
+
     this.speechBubble.setVisible(true);
 
-    this.speechBg.clear();
-    this.speechBg.fillStyle(0x000000, 0.85);
-    this.speechBg.lineStyle(4, 0xffffff, 1);
-    this.speechBg.fillRoundedRect(
-      -SPEECH_WIDTH / 2,
-      -SPEECH_HEIGHT,
-      SPEECH_WIDTH,
-      SPEECH_HEIGHT,
-      16,
-    );
-    this.speechBg.strokeRoundedRect(
-      -SPEECH_WIDTH / 2,
-      -SPEECH_HEIGHT,
-      SPEECH_WIDTH,
-      SPEECH_HEIGHT,
-      16,
-    );
+    const headerBounds = this.speechHeader.getBounds();
+    const textBounds = this.speechText.getBounds();
 
+    const paddingX = 12;
+    const paddingY = 8;
+    const headerGap = 4;
+
+    const contentWidth = Math.max(headerBounds.width, textBounds.width);
+    const bubbleWidth = Math.max(
+      120,
+      Math.min(320, contentWidth + paddingX * 2),
+    );
+    const bubbleHeight =
+      paddingY + headerBounds.height + headerGap + textBounds.height + paddingY;
+
+    const boxX = -bubbleWidth / 2;
+    const boxY = -bubbleHeight - 6; // 6px for pointer tail
+
+    this.speechBg.clear();
+
+    // Main bubble background
+    this.speechBg.fillStyle(bgColor, bgAlpha);
+    this.speechBg.lineStyle(2, borderColor, 1);
+    this.speechBg.fillRoundedRect(boxX, boxY, bubbleWidth, bubbleHeight, 8);
+    this.speechBg.strokeRoundedRect(boxX, boxY, bubbleWidth, bubbleHeight, 8);
+
+    // Header divider line
+    const dividerY = boxY + paddingY + headerBounds.height + 2;
+    this.speechBg.lineStyle(1, borderColor, 0.4);
     this.speechBg.beginPath();
-    this.speechBg.moveTo(-16, 0);
-    this.speechBg.lineTo(0, 16);
-    this.speechBg.lineTo(16, 0);
+    this.speechBg.moveTo(boxX + paddingX, dividerY);
+    this.speechBg.lineTo(boxX + bubbleWidth - paddingX, dividerY);
+    this.speechBg.strokePath();
+
+    // Pointer tail triangle at the bottom pointing to character
+    this.speechBg.fillStyle(bgColor, bgAlpha);
+    this.speechBg.lineStyle(2, borderColor, 1);
+    this.speechBg.beginPath();
+    this.speechBg.moveTo(-6, -6);
+    this.speechBg.lineTo(0, 0);
+    this.speechBg.lineTo(6, -6);
     this.speechBg.closePath();
     this.speechBg.fillPath();
     this.speechBg.strokePath();
+
+    // Position text elements inside container
+    this.speechHeader.setPosition(boxX + paddingX, boxY + paddingY);
+    this.speechText.setPosition(
+      boxX + paddingX,
+      boxY + paddingY + headerBounds.height + headerGap,
+    );
 
     this.updateSpeechPosition();
   }
@@ -183,71 +222,76 @@ export class CharacterSprite extends Phaser.GameObjects.Sprite {
   hideSpeech(): void {
     this.speechBubble?.setVisible(false);
     this.speechMessage = null;
+    this.speechTimer = 0;
     this.onSpeechComplete = null;
   }
 
   private updateSpeechPosition(): void {
-    if (!this.speechBubble) return;
+    if (
+      !this.speechBubble ||
+      !this.speechText ||
+      !this.speechHeader
+    )
+      return;
 
     // Position above head
     let targetX = this.x;
-    let targetY = this.y - this.displayHeight - 15;
+    let targetY = this.y - this.displayHeight - 6;
+
+    const headerBounds = this.speechHeader.getBounds();
+    const textBounds = this.speechText.getBounds();
+    const paddingX = 12;
+    const paddingY = 8;
+    const headerGap = 4;
+    const contentWidth = Math.max(headerBounds.width, textBounds.width);
+    const bubbleWidth = Math.max(
+      120,
+      Math.min(320, contentWidth + paddingX * 2),
+    );
+    const bubbleHeight =
+      paddingY + headerBounds.height + headerGap + textBounds.height + paddingY;
 
     const sceneWidth = this.scene.scale.width;
+    const sceneHeight = this.scene.scale.height;
 
     targetX = Phaser.Math.Clamp(
       targetX,
-      SPEECH_WIDTH / 2 + 10,
-      sceneWidth - SPEECH_WIDTH / 2 - 10,
+      bubbleWidth / 2 + 8,
+      sceneWidth - bubbleWidth / 2 - 8,
     );
-    targetY = Phaser.Math.Clamp(
-      targetY,
-      SPEECH_HEIGHT + 10,
-      this.scene.scale.height - 28,
-    );
+    if (targetY - bubbleHeight - 6 < 8) {
+      targetY = bubbleHeight + 6 + 8;
+    }
+    if (targetY > sceneHeight - 16) {
+      targetY = sceneHeight - 16;
+    }
 
     this.speechBubble.setPosition(targetX, targetY);
-    this.speechText?.setY(
-      -SPEECH_HEIGHT + SPEECH_PADDING - this.speechPlayback.offset,
-    );
-    this.speechMaskGraphics
-      ?.clear()
-      .fillStyle(0xffffff)
-      .fillRect(
-        targetX - SPEECH_WIDTH / 2 + SPEECH_PADDING,
-        targetY - SPEECH_HEIGHT + SPEECH_PADDING,
-        SPEECH_WIDTH - SPEECH_PADDING * 2,
-        SPEECH_VIEW_HEIGHT,
-      );
   }
 
   preUpdate(time: number, delta: number): void {
     super.preUpdate(time, delta);
-    if (this.speechBubble?.visible && this.speechText && this.speechMessage) {
-      const finished = this.speechPlayback.advance(
-        delta,
-        Math.max(0, this.speechText.height - SPEECH_VIEW_HEIGHT),
-        this.speechMessage.complete ?? true,
-      );
+    if (this.speechBubble?.visible && this.speechMessage) {
       this.updateSpeechPosition();
-      if (finished) {
-        const onComplete = this.onSpeechComplete;
-        this.hideSpeech();
-        onComplete?.();
+      if (this.speechMessage.complete !== false) {
+        this.speechTimer += delta;
+        if (this.speechTimer >= 9000) {
+          const onComplete = this.onSpeechComplete;
+          this.hideSpeech();
+          onComplete?.();
+        }
+      } else {
+        this.speechTimer = 0;
       }
     }
   }
 
   override destroy(fromScene?: boolean): void {
-    this.speechText?.clearMask();
-    this.speechMask?.destroy();
-    this.speechMaskGraphics?.destroy();
     this.speechBubble?.destroy();
     this.speechBubble = null;
+    this.speechHeader = null;
     this.speechText = null;
     this.speechBg = null;
-    this.speechMask = null;
-    this.speechMaskGraphics = null;
     this.speechMessage = null;
     this.onSpeechComplete = null;
     super.destroy(fromScene);

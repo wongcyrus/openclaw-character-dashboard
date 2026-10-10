@@ -22,10 +22,12 @@ export default defineConfig(({ mode }) => {
       },
     },
     server: {
+      host: "0.0.0.0",
       proxy: {
         "/api": {
           target: `http://localhost:${env.VITE_API_PORT ?? 3001}`,
           changeOrigin: true,
+          ws: true,
         },
       },
     },

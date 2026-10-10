@@ -51,11 +51,13 @@ export type CharacterMessage = {
   timestamp: number;
   runId?: string;
   complete?: boolean;
+  channel?: string;
 };
 
 type CharacterStoreState = {
   characterStates: Record<string, CharacterState>;
   characterMessages: Record<string, CharacterMessage>;
+  characterHistory: Record<string, CharacterMessage[]>;
   occupiedPoints: OccupancyMap;
   pendingForce: PendingForce | null;
 
@@ -64,6 +66,7 @@ type CharacterStoreState = {
     characterId: string,
     message: CharacterMessage | null,
   ) => void;
+  clearCharacterHistory: (characterId?: string) => void;
   claimPoint: (pointKey: string, characterId: string) => boolean;
   releasePoint: (pointKey: string, characterId: string) => void;
   getOccupiedPointKey: (characterId: string) => string | null;
@@ -78,6 +81,7 @@ type CharacterStoreState = {
 export const useCharacterStore = create<CharacterStoreState>()((set, get) => ({
   characterStates: {},
   characterMessages: {},
+  characterHistory: {},
   occupiedPoints: {},
   pendingForce: null,
 
@@ -88,13 +92,57 @@ export const useCharacterStore = create<CharacterStoreState>()((set, get) => ({
 
   setCharacterMessage: (characterId, message) =>
     set((prev) => {
-      const next = { ...prev.characterMessages };
+      const nextMessages = { ...prev.characterMessages };
+      const nextHistory = { ...prev.characterHistory };
+
       if (message === null) {
-        delete next[characterId];
+        delete nextMessages[characterId];
       } else {
-        next[characterId] = message;
+        nextMessages[characterId] = message;
+
+        const currentHistory = nextHistory[characterId]
+          ? [...nextHistory[characterId]]
+          : [];
+        const lastIndex = currentHistory.length - 1;
+        const lastMsg = lastIndex >= 0 ? currentHistory[lastIndex] : null;
+
+        // If the last message has the same non-empty runId and role, update it in place (e.g. streaming)
+        if (
+          lastMsg &&
+          message.runId &&
+          lastMsg.runId === message.runId &&
+          lastMsg.role === message.role
+        ) {
+          currentHistory[lastIndex] = {
+            ...lastMsg,
+            text: message.text,
+            timestamp: message.timestamp,
+            complete: message.complete,
+            channel: message.channel ?? lastMsg.channel,
+          };
+        } else {
+          currentHistory.push(message);
+          if (currentHistory.length > 50) {
+            currentHistory.shift();
+          }
+        }
+        nextHistory[characterId] = currentHistory;
       }
-      return { characterMessages: next };
+
+      return {
+        characterMessages: nextMessages,
+        characterHistory: nextHistory,
+      };
+    }),
+
+  clearCharacterHistory: (characterId) =>
+    set((prev) => {
+      if (characterId) {
+        const next = { ...prev.characterHistory };
+        delete next[characterId];
+        return { characterHistory: next };
+      }
+      return { characterHistory: {} };
     }),
 
   claimPoint: (pointKey, characterId) => {

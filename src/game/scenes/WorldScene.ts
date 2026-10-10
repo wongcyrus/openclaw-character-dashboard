@@ -222,9 +222,12 @@ export class WorldScene extends Phaser.Scene {
     });
 
     // Subscribe to character messages to show/hide speech bubbles
-    const unsubscribeMessages = useCharacterStore.subscribe((state, prev) => {
-      if (state.characterMessages === prev.characterMessages) return;
-      const messages = state.characterMessages;
+    const syncCharacterMessages = (
+      messages: Record<
+        string,
+        import("@/store/characterStore").CharacterMessage | null
+      >,
+    ) => {
       for (const [charId, record] of this.characters.entries()) {
         const msg = messages[charId];
         if (msg) {
@@ -238,7 +241,13 @@ export class WorldScene extends Phaser.Scene {
           record.sprite.hideSpeech();
         }
       }
+    };
+
+    const unsubscribeMessages = useCharacterStore.subscribe((state, prev) => {
+      if (state.characterMessages === prev.characterMessages) return;
+      syncCharacterMessages(state.characterMessages);
     });
+    syncCharacterMessages(useCharacterStore.getState().characterMessages);
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, unsubscribeMessages);
   }
 
